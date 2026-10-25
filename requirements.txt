@@ -1,0 +1,2 @@
+# Зависимостей нет: достаточно Python 3 из стандартной библиотеки
+# (urllib, http.server, sqlite3, json, pathlib).
