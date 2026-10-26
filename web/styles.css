@@ -51,9 +51,15 @@ header {
   border-color: var(--yellow);
 }
 
-.markets, .pairs { display: flex; gap: 2px; flex: 0 0 auto; }
+.markets { display: flex; gap: 2px; flex: 0 0 auto; padding-right: 8px; border-right: 1px solid var(--line); }
 
-.markets { padding-right: 8px; border-right: 1px solid var(--line); }
+#pairs, #intervals {
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
 
 .pair, .interval, .market {
   border: 0;
@@ -64,10 +70,7 @@ header {
 }
 
 .market { padding: 6px 8px; font-weight: 600; }
-.market.active { color: var(--yellow); }
-
-.pair { padding: 6px 4px; }
-.pair.active, .interval.active { color: var(--yellow); }
+.market.active, .pair.active, .interval.active { color: var(--yellow); }
 
 .last {
   font-size: 22px;
@@ -127,8 +130,89 @@ header {
   overflow-x: auto;
 }
 
-.interval { flex: 0 0 auto; padding: 6px 10px; border-radius: 4px; }
+.pair, .interval { flex: 0 0 auto; padding: 6px 10px; border-radius: 4px; }
 .interval:hover, .pair:hover, .market:hover { color: var(--text); }
+
+#views {
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.view {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 600 13px/1 "Segoe UI", Arial, sans-serif;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.view.active { color: var(--yellow); }
+.view:hover { color: var(--text); }
+
+#workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body.trades #workspace { flex-direction: row; }
+
+#board {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+#journal {
+  display: none;
+  flex-direction: column;
+  width: 320px;
+  flex: 0 0 320px;
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+body.trades #journal { display: flex; }
+body.trades #desk { display: none; }
+
+#journal strong {
+  padding: 10px 12px 6px;
+  color: var(--yellow);
+  font-size: 13px;
+}
+
+#journal-list {
+  overflow: auto;
+  flex: 1;
+}
+
+.trade {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: 12px/1.4 "Segoe UI", Arial, sans-serif;
+}
+
+.trade.active { border-left-color: var(--yellow); background: rgba(240, 185, 11, 0.08); }
+.trade:hover { background: rgba(255, 255, 255, 0.03); }
+.trade b { font-weight: 600; }
+.trade span { color: var(--muted); }
 
 main {
   position: relative;
@@ -136,7 +220,92 @@ main {
   min-height: 0;
 }
 
+#stage { position: relative; height: 100%; }
 #chart { height: 100%; }
+#figures { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+
+.alert {
+  position: absolute;
+  z-index: 3;
+  top: 36px;
+  right: 72px;
+  max-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(11, 14, 17, 0.92);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.alert.quiet { color: var(--muted); }
+.alert.long { border-color: var(--green); }
+.alert.short { border-color: var(--red); }
+.alert strong { display: block; font-size: 15px; margin-bottom: 4px; }
+.alert.long strong { color: var(--green); }
+.alert.short strong { color: var(--red); }
+.alert.watch { border-color: #c99400; border-style: dashed; }
+.alert.watch strong { color: var(--yellow); }
+.alert.quiet strong { color: var(--text); }
+.alert-note { color: var(--muted); font-size: 12px; }
+
+#strategy {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 32px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+body.strategy #strategy { display: block; }
+body.strategy #board, body.strategy #journal { display: none; }
+
+#strategy h3 { margin: 18px 0 8px; color: var(--yellow); font-size: 14px; }
+#strategy ul { margin: 0; padding-left: 18px; }
+
+.scan { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.scan-column h3 { margin-top: 4px !important; }
+
+.signal, .coin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: 12px/1.4 "Segoe UI", Arial, sans-serif;
+}
+
+.signal.long { border-left-color: var(--green); }
+.signal.short { border-left-color: var(--red); }
+.signal span, .coin-card span { color: var(--muted); }
+.signal:hover, .coin-card:hover { background: rgba(255, 255, 255, 0.03); }
+
+.report-block { max-width: 1100px; }
+.kpis { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.kpis div { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 4px; }
+.kpis span { color: var(--muted); font-size: 12px; }
+.kpis b { font-size: 15px; font-weight: 600; }
+
+#strategy table { border-collapse: collapse; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+#strategy th, #strategy td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--line); text-align: left; }
+#strategy th { color: var(--muted); font-weight: 500; }
+
+#equity { height: 260px; max-width: 1100px; margin: 8px 0 4px; }
+
+.coin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.coin-card { margin: 0; }
+.coin-card .up, .coin-card .down { font-weight: 600; }
+.coin-card span.up { color: var(--green); }
+.coin-card span.down { color: var(--red); }
 
 #legend {
   position: absolute;
@@ -150,10 +319,28 @@ main {
 }
 
 #legend b { font-weight: 500; }
+
+.desk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.desk strong { color: var(--yellow); font-size: 13px; }
+.desk b { font-weight: 600; }
+.desk-note { color: var(--muted); }
 #legend .up, #legend .down { margin-left: 8px; }
 
 @media (max-width: 800px) {
   header { gap: 12px; }
   .stat { display: none; }
   .last { font-size: 18px; }
+  body.trades #workspace { flex-direction: column; }
+  .scan { grid-template-columns: 1fr; }
+  #journal { width: auto; flex: 0 0 auto; max-height: 38vh; border-right: 0; border-bottom: 1px solid var(--line); }
 }

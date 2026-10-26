@@ -15,7 +15,6 @@
     <form id="symbol-form">
       <input id="symbol" value="BTCUSDT" spellcheck="false" autocomplete="off" aria-label="Пара">
     </form>
-    <div class="pairs" id="pairs"></div>
     <div id="last" class="last">—</div>
     <div id="change" class="change">—</div>
     <div class="stat"><span>Макс. 24ч</span><strong id="high">—</strong></div>
@@ -23,11 +22,37 @@
     <div class="stat"><span>Объём 24ч</span><strong id="volume">—</strong></div>
     <div id="live" class="live">Binance spot</div>
   </header>
+  <nav id="pairs" aria-label="Монеты"></nav>
   <nav id="intervals" aria-label="Таймфрейм"></nav>
+  <nav id="views" aria-label="Раздел">
+    <button type="button" class="view active" data-view="chart">График</button>
+    <button type="button" class="view" data-view="trades">Сделки</button>
+    <button type="button" class="view" data-view="strategy">Стратегия</button>
+  </nav>
+  <div id="workspace">
+  <aside id="journal">
+    <strong>Сделки</strong>
+    <div id="journal-list">Жду журнал</div>
+  </aside>
+  <div id="board">
+  <aside id="desk" class="desk">
+    <strong>Бумажный счёт · 2000 USDT · число монет без лимита</strong>
+    <div id="desk-body">Считаю вход</div>
+  </aside>
   <main>
     <div id="legend"></div>
-    <div id="chart"></div>
+    <div id="alert" class="alert quiet">Разбираю монету по стратегии</div>
+    <div id="stage">
+      <div id="chart"></div>
+      <svg id="figures" aria-hidden="true"></svg>
+    </div>
   </main>
+  </div>
+  <section id="strategy" aria-label="Стратегия">
+    <div id="strategy-live">Жду поиск сигналов</div>
+    <div id="strategy-body">Загружаю отчёт</div>
+  </section>
+  </div>
   <script src="/vendor/lightweight-charts.standalone.production.js"></script>
   <script src="/app.js"></script>
 </body>

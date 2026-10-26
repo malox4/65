@@ -8,6 +8,8 @@ import sys
 from urllib.parse import parse_qs, urlparse
 
 from bot.binance import fetch_klines, fetch_ticker
+from bot.paper import snapshot, start as start_paper
+from bot.strategy import SCANNER, STATS_PATH
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -35,6 +37,14 @@ class ChartHandler(BaseHTTPRequestHandler):
                 self._klines(parse_qs(parsed.query))
             elif parsed.path == "/api/ticker":
                 self._ticker(parse_qs(parsed.query))
+            elif parsed.path == "/api/paper":
+                self._json(snapshot())
+            elif parsed.path == "/api/strategy":
+                self._json(SCANNER.snapshot())
+            elif parsed.path == "/api/strategy/coin":
+                self._json(SCANNER.coin(_symbol(parse_qs(parsed.query))) or {"error": "монета ещё не разобрана"})
+            elif parsed.path == "/api/strategy/stats":
+                self._json(json.loads(STATS_PATH.read_text(encoding="utf-8")) if STATS_PATH.exists() else {"error": "отчёт не собран"})
             else:
                 self._file(parsed.path)
         except ValueError as error:
@@ -121,6 +131,8 @@ def _one(query, name, default=None):
 
 
 def main():
+    start_paper()
+    SCANNER.start()
     server = ThreadingHTTPServer((HOST, PORT), ChartHandler)
     print(f"График: http://{HOST}:{PORT}", flush=True)
     server.serve_forever()
