@@ -49,6 +49,9 @@ const state = {
   signalNote: "",
   scan: null,
   stats: null,
+  families: null,
+  corr: null,
+  news: null,
   equityChart: null,
   draw: null,
   socket: null,
@@ -325,10 +328,14 @@ async function refreshSignal() {
   }
   const symbol = state.symbol;
   try {
-    const coin = await getJson(`/api/strategy/coin?symbol=${symbol}`);
+    const [coin, live] = await Promise.all([
+      getJson(`/api/strategy/coin?symbol=${symbol}`),
+      getJson(`/api/correlation/coin?symbol=${symbol}`).catch(() => null),
+    ]);
     if (symbol !== state.symbol) return;
     state.signal = coin.error ? null : coin;
     state.signalNote = coin.error || "";
+    if (state.signal && live && !live.error) state.signal.liveCorr = live;
   } catch (error) {
     if (symbol !== state.symbol) return;
     state.signal = null;
@@ -346,10 +353,14 @@ function refreshDrawings() {
   const coin = currentSignal();
   const strong = coin?.strong.find((item) => ["active", "open"].includes(item.outcome.status)) || null;
   const watch = coin && !strong ? pickWatch(coin.watch) : null;
-  candleSeries.setMarkers(coin ? signalMarkers(coin) : []);
-  setGuides(strong, watch);
-  renderAlert(coin, strong, watch);
-  state.draw = coin ? { watch: coin.watch.filter((item) => item.boxHigh != null) } : null;
+  const map = coin?.map?.ok ? coin.map : null;
+  candleSeries.setMarkers(coin ? signalMarkers(coin, map) : []);
+  setGuides(strong, watch, map);
+  renderAlert(coin, strong, watch, map);
+  state.draw = coin ? {
+    watch: coin.watch.filter((item) => item.boxHigh != null),
+    map,
+  } : null;
   requestAnimationFrame(positionOverlays);
 }
 
@@ -365,7 +376,7 @@ function barTime(unix) {
   return time;
 }
 
-function signalMarkers(coin) {
+function signalMarkers(coin, map) {
   const markers = [];
   const outcomeName = { target: "цель", stop: "стоп", time: "время" };
   for (const item of coin.strong.concat(coin.recent)) {
@@ -391,8 +402,23 @@ function signalMarkers(coin) {
       });
     }
   }
+  if (map?.events) {
+    for (const event of map.events) {
+      const time = barTime(event.time);
+      if (time == null) continue;
+      const long = event.side > 0;
+      const color = event.kind === "sweep" ? "#C99400" : event.kind === "choch" ? "#F0B90B" : long ? "#0ECB81" : "#F6465D";
+      markers.push({
+        time,
+        position: long ? "belowBar" : "aboveBar",
+        color,
+        shape: event.kind === "sweep" ? "circle" : long ? "arrowUp" : "arrowDown",
+        text: event.title,
+      });
+    }
+  }
   const unique = new Map();
-  for (const marker of markers) unique.set(String(marker.time) + marker.position, marker);
+  for (const marker of markers) unique.set(String(marker.time) + marker.position + (marker.text || ""), marker);
   return [...unique.values()].sort((left, right) => left.time - right.time);
 }
 
@@ -404,30 +430,147 @@ function positionOverlays() {
   svg.replaceChildren();
   const model = state.draw;
   if (!model || !width || !state.bars.length) return;
-  for (const item of model.watch) {
-    const start = barTime(item.since);
-    const x1 = start == null ? null : chart.timeScale().timeToCoordinate(start);
-    const x2 = chart.timeScale().timeToCoordinate(state.bars.at(-1).time);
-    const y1 = candleSeries.priceToCoordinate(item.boxHigh);
-    const y2 = candleSeries.priceToCoordinate(item.boxLow);
-    if ([x1, x2, y1, y2].some((value) => value == null)) continue;
-    const rect = document.createElementNS(SVG_NS, "rect");
-    rect.setAttribute("x", String(Math.min(x1, x2)));
-    rect.setAttribute("y", String(Math.min(y1, y2)));
-    rect.setAttribute("width", String(Math.max(4, Math.abs(x2 - x1) + 8)));
-    rect.setAttribute("height", String(Math.max(2, Math.abs(y2 - y1))));
-    rect.setAttribute("fill", item.ready ? "rgba(240, 185, 11, 0.14)" : "rgba(240, 185, 11, 0.06)");
-    rect.setAttribute("stroke", "#F0B90B");
-    rect.setAttribute("stroke-dasharray", "5 4");
-    svg.appendChild(rect);
+  for (const item of model.watch || []) {
+    drawSvgBox(svg, item.since, item.boxHigh, item.boxLow, {
+      fill: item.ready ? "rgba(240, 185, 11, 0.14)" : "rgba(240, 185, 11, 0.06)",
+      stroke: "#F0B90B",
+      dash: "5 4",
+      label: item.ready ? "сжатие · пробой даст сильный сигнал" : "сжатие · может стать сильным",
+      labelColor: "#F0B90B",
+    });
+  }
+  const map = model.map;
+  if (!map) return;
+  for (const box of map.boxes || []) {
+    const style = mapBoxStyle(box);
+    drawSvgBox(svg, box.since, box.top, box.bottom, style);
+  }
+  const dbl = map.pending || {};
+  if (dbl.doubleUp) drawNeck(svg, dbl.doubleUp.neck, "#0ECB81", "шея · двойное дно");
+  if (dbl.doubleDn) drawNeck(svg, dbl.doubleDn.neck, "#F6465D", "шея · двойная вершина");
+  if (map.ghost) drawGhostCandle(svg, map.ghost);
+}
+
+function mapBoxStyle(box) {
+  if (box.kind === "squeeze") {
+    return { fill: "rgba(240, 185, 11, 0.1)", stroke: "#F0B90B", dash: "5 4", label: box.text, labelColor: "#F0B90B" };
+  }
+  if (box.kind === "ob") {
+    const green = box.side > 0;
+    return {
+      fill: green ? "rgba(14, 203, 129, 0.12)" : "rgba(246, 70, 93, 0.12)",
+      stroke: green ? "#0ECB81" : "#F6465D",
+      dash: "",
+      label: box.text,
+      labelColor: green ? "#0ECB81" : "#F6465D",
+    };
+  }
+  const green = box.side > 0;
+  return {
+    fill: green ? "rgba(14, 203, 129, 0.08)" : "rgba(246, 70, 93, 0.08)",
+    stroke: green ? "rgba(14, 203, 129, 0.7)" : "rgba(246, 70, 93, 0.7)",
+    dash: "3 3",
+    label: box.text,
+    labelColor: green ? "#0ECB81" : "#F6465D",
+  };
+}
+
+function drawSvgBox(svg, sinceUnix, top, bottom, style) {
+  const start = barTime(sinceUnix);
+  const x1 = start == null ? null : chart.timeScale().timeToCoordinate(start);
+  const x2 = chart.timeScale().timeToCoordinate(state.bars.at(-1).time);
+  const y1 = candleSeries.priceToCoordinate(top);
+  const y2 = candleSeries.priceToCoordinate(bottom);
+  if ([x1, x2, y1, y2].some((value) => value == null)) return;
+  const rect = document.createElementNS(SVG_NS, "rect");
+  rect.setAttribute("x", String(Math.min(x1, x2)));
+  rect.setAttribute("y", String(Math.min(y1, y2)));
+  rect.setAttribute("width", String(Math.max(4, Math.abs(x2 - x1) + 8)));
+  rect.setAttribute("height", String(Math.max(2, Math.abs(y2 - y1))));
+  rect.setAttribute("fill", style.fill);
+  rect.setAttribute("stroke", style.stroke);
+  if (style.dash) rect.setAttribute("stroke-dasharray", style.dash);
+  svg.appendChild(rect);
+  if (style.label) {
     const text = document.createElementNS(SVG_NS, "text");
     text.setAttribute("x", String(Math.min(x1, x2) + 4));
     text.setAttribute("y", String(Math.min(y1, y2) - 5));
-    text.setAttribute("fill", "#F0B90B");
-    text.setAttribute("font-size", "12");
-    text.textContent = item.ready ? "сжатие · пробой даст сильный сигнал" : "сжатие · может стать сильным";
+    text.setAttribute("fill", style.labelColor || style.stroke);
+    text.setAttribute("font-size", "11");
+    text.textContent = style.label;
     svg.appendChild(text);
   }
+}
+
+function drawNeck(svg, price, color, label) {
+  const x1 = chart.timeScale().timeToCoordinate(state.bars[Math.max(0, state.bars.length - 40)].time);
+  const x2 = chart.timeScale().timeToCoordinate(state.bars.at(-1).time);
+  const y = candleSeries.priceToCoordinate(price);
+  if ([x1, x2, y].some((value) => value == null)) return;
+  const line = document.createElementNS(SVG_NS, "line");
+  line.setAttribute("x1", String(x1));
+  line.setAttribute("x2", String(x2 + 24));
+  line.setAttribute("y1", String(y));
+  line.setAttribute("y2", String(y));
+  line.setAttribute("stroke", color);
+  line.setAttribute("stroke-dasharray", "6 4");
+  line.setAttribute("stroke-width", "1.5");
+  svg.appendChild(line);
+  const text = document.createElementNS(SVG_NS, "text");
+  text.setAttribute("x", String(x2 + 6));
+  text.setAttribute("y", String(y - 4));
+  text.setAttribute("fill", color);
+  text.setAttribute("font-size", "11");
+  text.textContent = label;
+  svg.appendChild(text);
+}
+
+function drawGhostCandle(svg, ghost) {
+  const last = state.bars.at(-1);
+  if (!last) return;
+  const step = INTERVAL_SECONDS[state.interval] || 900;
+  const t0 = stamp(last.time) + step;
+  const t1 = t0 + step;
+  // приближаем координаты «следующей» свечи справа от последней
+  const xLast = chart.timeScale().timeToCoordinate(last.time);
+  const xPrev = state.bars.length > 1 ? chart.timeScale().timeToCoordinate(state.bars.at(-2).time) : null;
+  if (xLast == null) return;
+  const width = xPrev == null ? 8 : Math.max(4, Math.abs(xLast - xPrev) * 0.7);
+  const x = xLast + (xPrev == null ? 12 : Math.abs(xLast - xPrev));
+  const yO = candleSeries.priceToCoordinate(ghost.open);
+  const yH = candleSeries.priceToCoordinate(ghost.high);
+  const yL = candleSeries.priceToCoordinate(ghost.low);
+  const yC = candleSeries.priceToCoordinate(ghost.close);
+  if ([yO, yH, yL, yC].some((value) => value == null)) return;
+  const color = ghost.bull ? "#0ECB81" : "#F6465D";
+  const wick = document.createElementNS(SVG_NS, "line");
+  wick.setAttribute("x1", String(x + width / 2));
+  wick.setAttribute("x2", String(x + width / 2));
+  wick.setAttribute("y1", String(yH));
+  wick.setAttribute("y2", String(yL));
+  wick.setAttribute("stroke", color);
+  wick.setAttribute("stroke-width", "2");
+  wick.setAttribute("opacity", "0.85");
+  svg.appendChild(wick);
+  const bodyTop = Math.min(yO, yC);
+  const bodyBot = Math.max(yO, yC);
+  const body = document.createElementNS(SVG_NS, "rect");
+  body.setAttribute("x", String(x));
+  body.setAttribute("y", String(bodyTop));
+  body.setAttribute("width", String(width));
+  body.setAttribute("height", String(Math.max(2, bodyBot - bodyTop)));
+  body.setAttribute("fill", ghost.bull ? "rgba(14, 203, 129, 0.45)" : "rgba(246, 70, 93, 0.45)");
+  body.setAttribute("stroke", color);
+  body.setAttribute("stroke-width", "1.5");
+  svg.appendChild(body);
+  const text = document.createElementNS(SVG_NS, "text");
+  text.setAttribute("x", String(x + width + 4));
+  text.setAttribute("y", String(ghost.bull ? yH : yL));
+  text.setAttribute("fill", color);
+  text.setAttribute("font-size", "11");
+  text.textContent = ghost.text || "потенц. свеча";
+  svg.appendChild(text);
+  void t1;
 }
 
 function leaveOtherViews() {
@@ -641,11 +784,14 @@ function renderTradeAlert(trade) {
   const node = document.getElementById("alert");
   const side = trade.side === "short" ? "Шорт" : "Лонг";
   node.className = `alert ${trade.side}`;
-  if (trade.status === "open") {
-    node.innerHTML = `<strong>${side} · открыта</strong>Вход ${formatPrice(trade.entry)}<br>Выход по стопу ${formatPrice(trade.stop)}<br>Выход по цели ${formatPrice(trade.target)}<br>Сейчас ${signedMoney(trade.unrealized || 0)}`;
-    return;
-  }
-  node.innerHTML = `<strong>${side} · ${tradeStatus(trade)}</strong>Вход ${formatPrice(trade.entry)}<br>Выход ${formatPrice(trade.exit)} · ${signedMoney(trade.pnl)}<br>План был: стоп ${formatPrice(trade.stop)} · цель ${formatPrice(trade.target)}`;
+  const head = `<div class="alert-head"><em>${prettySymbol(trade.symbol || state.symbol)} · ${trade.reason || "сделка"}</em><strong>${side} · ${trade.status === "open" ? "открыта" : tradeStatus(trade)}</strong></div>`;
+  const pnl = trade.status === "open" ? Number(trade.unrealized || 0) : Number(trade.pnl);
+  const exitCell = trade.status === "open"
+    ? `<div><span>Сейчас</span><b class="${toneOf(pnl)}">${signedMoney(pnl)} USDT</b></div>`
+    : `<div><span>Выход</span><b class="${toneOf(pnl)}">${formatPrice(trade.exit)}</b><small>${signedMoney(pnl)} USDT</small></div>`;
+  node.innerHTML = head
+    + `<div class="levels"><div><span>Вход</span><b>${formatPrice(trade.entry)}</b></div>${exitCell}`
+    + `<div><span>Стоп</span><b class="down">${formatPrice(trade.stop)}</b></div><div><span>Цель</span><b class="up">${formatPrice(trade.target)}</b></div></div>`;
 }
 
 function clock(unix) {
@@ -668,31 +814,54 @@ function setPaperGuides(position) {
   add(position.target, "#0ECB81", "цель");
 }
 
+function tile(label, value, tone = "", note = "") {
+  const node = document.createElement("div");
+  node.className = `tile${tone ? ` ${tone}` : ""}`;
+  const head = document.createElement("span");
+  head.textContent = label;
+  const body = document.createElement("b");
+  body.textContent = value;
+  node.append(head, body);
+  if (note) {
+    const small = document.createElement("small");
+    small.textContent = note;
+    node.append(small);
+  }
+  return node;
+}
+
+function toneOf(value) {
+  return value > 0 ? "up" : value < 0 ? "down" : "";
+}
+
 function renderDesk(paper) {
   const node = document.getElementById("desk-body");
-  const day = `${paper.dayPnl > 0 ? "+" : ""}${money(paper.dayPnl)}`;
-  const rows = [`Баланс <b>${money(paper.equity)} USDT</b> · сегодня ${day}`];
-  if (paper.watched) {
-    const risk = paper.risk ? `${Math.round(paper.risk * 100)}%` : "5%";
-    rows.push(`Смотрю ${paper.watched} монет · риск ${risk} на сделку · плечо до ${paper.leverageCap || 20} · число монет без лимита`);
-  }
-  if (paper.result) rows.push(`<b>${paper.result}</b>`);
-  for (const position of paper.positions || (paper.position ? [paper.position] : [])) {
-    const side = position.side === "short" ? "Шорт" : "Лонг";
-    const tone = position.side === "short" ? "down" : "up";
-    rows.push(`<b class="${tone}">${prettySymbol(position.symbol)} · ${side} · ${position.leverage.toFixed(1)}x</b> · ${position.reason}`);
-    rows.push(`Вход ${formatPrice(position.entry)} · стоп ${formatPrice(position.stop)} · цель ${formatPrice(position.target)}`);
-    rows.push(`Сейчас ${signedMoney(position.unrealized)}`);
-  }
-  rows.push(`<span class="desk-note">${paper.note}</span>`);
-  for (const trade of paper.trades.slice(0, 4)) {
-    const name = trade.status === "target" ? "цель" : trade.status === "time" ? "время" : "стоп";
-    const side = trade.side === "short" ? "шорт" : "лонг";
-    const pair = trade.symbol ? prettySymbol(trade.symbol) : "";
-    rows.push(`${pair} · ${side} · ${name} · ${signedMoney(trade.pnl)}`);
-  }
-  node.innerHTML = rows.join("<br>");
+  node.replaceChildren();
   const positions = paper.positions || [];
+  const mix = paper.summary?.mix;
+  const total = paper.equity - paper.start;
+  node.append(
+    tile("Бумажный счёт", `${money(paper.equity)} USDT`, "", `старт ${money(paper.start)} · итог ${signedMoney(total)} (${signed((total / paper.start) * 100, 1)}%)`),
+    tile("Сегодня", `${signedMoney(paper.dayPnl)} USDT`, toneOf(paper.dayPnl)),
+    tile("Режим", paper.paused ? "Пауза" : positions.length ? "В сделках" : "Ищу вход", paper.paused ? "warn" : "up",
+      paper.paused ? "новых входов нет, стратегия на проверке" : `риск ${Math.round((paper.risk || 0.05) * 100)}% · плечо до ${paper.leverageCap || 20}`),
+    tile("По стратегии «микс»", mix ? `${mix.n} сделок · ${signedMoney(mix.pnl)}` : "—", mix ? toneOf(mix.pnl) : "",
+      mix ? `цель ${mix.target} · стоп ${mix.stop} · время ${mix.time}` : ""),
+    tile("Смотрю", `${paper.watched || 50} монет`, "", "15m · поиск каждые 5 минут"),
+  );
+  for (const position of positions) {
+    const side = position.side === "short" ? "Шорт" : "Лонг";
+    node.append(tile(
+      `${prettySymbol(position.symbol)} · ${side} · ${position.leverage.toFixed(1)}x`,
+      `${signedMoney(position.unrealized)} USDT`,
+      toneOf(position.unrealized),
+      `вход ${formatPrice(position.entry)} · стоп ${formatPrice(position.stop)} · цель ${formatPrice(position.target)}`,
+    ));
+  }
+  const note = document.createElement("span");
+  note.className = "desk-note tile-note";
+  note.textContent = paper.note;
+  node.append(note);
   const newest = positions.at(-1);
   if (newest && !positions.some((position) => position.symbol === state.symbol) && state.shownTrade !== newest.id) {
     state.shownTrade = newest.id;
@@ -725,11 +894,14 @@ async function refreshPaper() {
     else if (selected && selected.symbol === state.symbol && state.interval === "1m") paintTrade(selected, false);
     return;
   }
-  if (state.view === "strategy") return;
+  if (state.view === "strategy") {
+    renderStatus(paper);
+    return;
+  }
   renderDesk(paper);
 }
 
-function setGuides(strong, watch) {
+function setGuides(strong, watch, map) {
   while (guides.length) candleSeries.removePriceLine(guides.pop());
   const add = (price, color, title, style) => guides.push(candleSeries.createPriceLine({
     price,
@@ -751,6 +923,10 @@ function setGuides(strong, watch) {
     add(watch.stop, "rgba(246, 70, 93, 0.55)", "стоп если сработает", LightweightCharts.LineStyle.Dotted);
     add(watch.target, "rgba(14, 203, 129, 0.55)", "цель если сработает", LightweightCharts.LineStyle.Dotted);
   }
+  if (map?.levels?.high) add(map.levels.high.price, "rgba(246, 70, 93, 0.55)", "уровень H", LightweightCharts.LineStyle.Dotted);
+  if (map?.levels?.low) add(map.levels.low.price, "rgba(14, 203, 129, 0.55)", "уровень L", LightweightCharts.LineStyle.Dotted);
+  if (map?.ghost?.stop != null) add(map.ghost.stop, "rgba(246, 70, 93, 0.35)", "потенц. стоп", LightweightCharts.LineStyle.Dotted);
+  if (map?.ghost?.target != null) add(map.ghost.target, "rgba(14, 203, 129, 0.35)", "потенц. цель", LightweightCharts.LineStyle.Dotted);
 }
 
 function sideName(side) {
@@ -775,7 +951,67 @@ function statsLine(stats) {
   return `История за год (${scope}): ${use.n} сигн., цель достигнута в ${Math.round(use.hit2 * 100)}%, в среднем ${signed(use.r2)} стопа`;
 }
 
-function renderAlert(coin, strong, watch) {
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]));
+}
+
+function contextRows(coin, side = 0) {
+  const rank = coin.atrRank == null ? null : Math.round(coin.atrRank * 100);
+  const trend = (value) => (side ? value === side : value !== 0);
+  const rows = [
+    ["Тренд 4h", trendWord(coin.trends.h4), trend(coin.trends.h4)],
+    ["Тренд 1h", trendWord(coin.trends.h1), trend(coin.trends.h1)],
+    ["BTC 1h", trendWord(coin.trends.btc_h1), coin.symbol === "BTCUSDT" ? null : trend(coin.trends.btc_h1)],
+    ["Волатильность", rank == null ? "—" : `${rank}% · нужно ≥66%`, rank == null ? null : rank >= 66],
+    ["Группа", coin.label || "—", null],
+  ];
+  return `<div class="checks">${rows.map(([label, value, ok]) => (
+    `<div class="check ${ok == null ? "" : ok ? "ok" : "no"}"><span>${label}</span><b>${escapeHtml(value)}</b></div>`
+  )).join("")}</div>`;
+}
+
+function linkBlock(coin) {
+  const link = coin.link;
+  const live = coin.liveCorr;
+  if (coin.symbol === "BTCUSDT") {
+    const btc = live?.btc;
+    const move = btc?.move1h == null ? "" : ` · 1h ${signed(btc.move1h, 2)}%`;
+    return `<div class="link-box"><em>BTC · ведущая</em><p>Остальные монеты считаются относительно неё${move}.</p></div>`;
+  }
+  if (!link && !live) return "";
+  const corr = (live?.corr1h ?? link?.corr1h);
+  const beta = (live?.beta1h ?? link?.beta1h);
+  const live7 = live?.live7d?.corr;
+  const live30 = live?.live30d?.corr;
+  const dump = (live?.dumpFollow ?? link?.dumpFollow);
+  const vs = (live?.dumpMoveVsBtc ?? link?.dumpMoveVsBtc);
+  const own = (live?.ownMovesShare ?? link?.ownMovesShare);
+  return `<div class="link-box"><em>Связь с BTC</em>`
+    + `<div class="levels">`
+    + `<div><span>Корр. год</span><b>${corr == null ? "—" : corr.toFixed(2)}</b></div>`
+    + `<div><span>Бета</span><b>${beta == null ? "—" : beta.toFixed(2)}</b></div>`
+    + `<div><span>Корр. 7д</span><b>${live7 == null ? "—" : live7.toFixed(2)}</b></div>`
+    + `<div><span>Корр. 30д</span><b>${live30 == null ? "—" : live30.toFixed(2)}</b></div>`
+    + `<div><span>За сливом</span><b>${dump == null ? "—" : `${Math.round(dump * 100)}%`}</b>`
+    + `${vs == null ? "" : `<small>x${vs}</small>`}</div>`
+    + `<div><span>Свои</span><b>${own == null ? "—" : `${Math.round(own * 100)}%`}</b></div>`
+    + `</div>`
+    + `<p class="alert-text">${escapeHtml(coin.label || live?.label || "нет группы")}</p></div>`;
+}
+
+function levelRows(item, outcome) {
+  const entry = item.entry ?? item.level;
+  const stopPct = item.riskPct != null ? `${item.riskPct}%` : `${(Math.abs(entry - item.stop) / entry * 100).toFixed(2)}%`;
+  const reward = Math.abs(item.target - entry) / Math.abs(entry - item.stop);
+  return `<div class="levels">`
+    + `<div><span>Вход</span><b>${formatPrice(entry)}</b></div>`
+    + `<div><span>Стоп</span><b class="down">${formatPrice(item.stop)}</b><small>${stopPct} цены</small></div>`
+    + `<div><span>Цель</span><b class="up">${formatPrice(item.target)}</b><small>${reward.toFixed(1)} стопа</small></div>`
+    + (outcome ? `<div><span>Статус</span><b>${outcome}</b></div>` : "")
+    + `</div>`;
+}
+
+function renderAlert(coin, strong, watch, map) {
   const node = document.getElementById("alert");
   if (!coin) {
     node.className = "alert quiet";
@@ -783,31 +1019,61 @@ function renderAlert(coin, strong, watch) {
     else node.textContent = state.signalNote || "Разбираю монету по стратегии";
     return;
   }
+  const head = (title, kicker) => `<div class="alert-head"><em>${kicker}</em><strong>${title}</strong></div>`;
+  const mapBlock = () => {
+    if (!map?.ok) return "";
+    const hi = map.levels?.high?.price;
+    const lo = map.levels?.low?.price;
+    const ghost = map.ghost;
+    return `<div class="link-box"><em>SMC карта</em>`
+      + `<div class="levels">`
+      + `<div><span>Структура</span><b>${escapeHtml(map.structureWord || "—")}</b></div>`
+      + `<div><span>Ждём</span><b>${escapeHtml(map.waiting || "—")}</b></div>`
+      + `<div><span>Уровень H</span><b>${hi == null ? "—" : formatPrice(hi)}</b></div>`
+      + `<div><span>Уровень L</span><b>${lo == null ? "—" : formatPrice(lo)}</b></div>`
+      + `</div>`
+      + (ghost
+        ? `<p class="alert-text">Потенц. свеча: ${escapeHtml(ghost.text)}`
+          + (ghost.stop != null ? ` · стоп ${formatPrice(ghost.stop)}` : "")
+          + (ghost.target != null ? ` · цель ${formatPrice(ghost.target)}` : "")
+          + `</p>`
+        : "")
+      + `</div>`;
+  };
   if (strong) {
     const tone = strong.side > 0 ? "long" : "short";
-    const status = strong.outcome.status === "active"
-      ? "Лимитный вход действует 30 минут после сигнала"
-      : "Сигнал в работе: выход по стопу, цели или через 8 часов";
+    const status = strong.outcome.status === "active" ? "вход действует 30 мин" : "в работе до 8 часов";
     node.className = `alert ${tone}`;
-    node.innerHTML = `<strong>Сильный сигнал · ${sideName(strong.side)}</strong>${strong.letter}. ${strong.name}<br>`
-      + `Вход ${formatPrice(strong.entry)} · стоп ${formatPrice(strong.stop)} · цель ${formatPrice(strong.target)}<br>`
-      + `Риск до стопа ${strong.riskPct}% цены<br>${status}<br><span class="alert-note">${statsLine(strong.stats)}</span>`;
+    node.innerHTML = head(`${sideName(strong.side)} · ${strong.letter}. ${strong.name}`, "Сильный сигнал")
+      + levelRows(strong, status)
+      + contextRows(coin, strong.side)
+      + linkBlock(coin)
+      + mapBlock()
+      + `<span class="alert-note">${statsLine(strong.stats)}</span>`;
     return;
   }
   if (watch) {
-    const missing = watch.missing.length ? `Не хватает: ${watch.missing.join(", ")}` : "Остальные условия уже выполнены";
+    const missing = watch.missing.length ? `Не хватает: ${watch.missing.join(", ")}` : "Остальные условия выполнены";
     node.className = "alert watch";
-    node.innerHTML = `<strong>Может стать сильным · ${sideName(watch.side)}</strong>${watch.letter}. ${watch.name}<br>`
-      + `Нужно: ${watch.condition}<br>${missing}<br>`
-      + `Если сработает: стоп ${formatPrice(watch.stop)} · цель ${formatPrice(watch.target)}<br><span class="alert-note">${statsLine(watch.stats)}</span>`;
+    node.innerHTML = head(`${sideName(watch.side)} · ${watch.letter}. ${watch.name}`, "Может стать сильным")
+      + `<p class="alert-text">Нужно: ${escapeHtml(watch.condition)}.<br>${escapeHtml(missing)}</p>`
+      + levelRows(watch, "жду условие")
+      + contextRows(coin, watch.side)
+      + linkBlock(coin)
+      + mapBlock()
+      + `<span class="alert-note">${statsLine(watch.stats)}</span>`;
     return;
   }
-  const rank = coin.atrRank == null ? "—" : `${Math.round(coin.atrRank * 100)}%`;
   const last = coin.recent[0];
-  const lastLine = last ? `<br>Последний сильный: ${last.letter}, ${sideName(last.side).toLowerCase()}, ${clock(last.entryTime)} → ${last.outcome.status === "target" ? "цель" : last.outcome.status === "stop" ? "стоп" : "по времени"}` : "";
-  node.className = "alert quiet";
-  node.innerHTML = `<strong>Сильного сигнала нет</strong>Тренд 4h ${trendWord(coin.trends.h4)} · BTC 1h ${trendWord(coin.trends.btc_h1)}<br>`
-    + `Волатильность ${rank} (нужно от 66%)${lastLine}`;
+  const outcome = { target: "цель", stop: "стоп", time: "по времени" };
+  const lastLine = last
+    ? `<p class="alert-text">Последний сильный: ${last.letter}, ${sideName(last.side).toLowerCase()}, ${clock(last.entryTime)} → <b class="${last.outcome.r > 0 ? "up" : "down"}">${outcome[last.outcome.status] || "в работе"}</b></p>`
+    : `<p class="alert-text">За двое суток сильных сигналов не было</p>`;
+  node.className = map?.ghost ? "alert watch" : "alert quiet";
+  node.innerHTML = head(
+    map?.waiting && map.waiting !== "—" ? `Ждём: ${map.waiting}` : "Сильного сигнала нет",
+    `SMC + стратегия · ${prettySymbol(coin.symbol)}`,
+  ) + contextRows(coin) + linkBlock(coin) + mapBlock() + lastLine;
 }
 
 function startLive() {
@@ -968,26 +1234,343 @@ function setLive(text, online = false) {
 }
 
 refreshPaper().catch(() => {});
+refreshNews().catch(() => {});
 setInterval(() => refreshPaper().catch(() => {}), 5000);
 setInterval(() => {
   if (state.view === "chart") refreshSignal().catch(() => {});
-  if (state.view === "strategy") refreshScan().catch(() => {});
+  if (state.view === "strategy") {
+    refreshScan().then(() => {
+      if (state.corr) renderMarket(state.corr, state.scan);
+    }).catch(() => {});
+  }
 }, 30000);
+setInterval(() => {
+  refreshNews().catch(() => {});
+  if (state.view === "strategy") refreshCorr().catch(() => {});
+}, 300000);
 
 async function openStrategy() {
   const body = document.getElementById("strategy-body");
+  renderStatus(state.paper);
+  renderRules();
+  const tasks = [
+    refreshScan(),
+    refreshCorr(),
+    refreshNews(),
+    (async () => {
+      try {
+        if (!state.stats) state.stats = await getJson("/api/strategy/stats");
+        if (state.stats.error) {
+          body.textContent = state.stats.error;
+          state.stats = null;
+        } else {
+          renderReport(state.stats);
+        }
+      } catch (error) {
+        body.textContent = error.message;
+      }
+    })(),
+    (async () => {
+      try {
+        if (!state.families) state.families = await getJson("/api/strategy/families");
+        if (!state.families.error) renderLab(state.families);
+      } catch (error) {
+        document.getElementById("strategy-lab").textContent = error.message;
+      }
+    })(),
+  ];
+  await Promise.all(tasks);
+}
+
+async function refreshCorr() {
+  const node = document.getElementById("strategy-corr");
   try {
-    if (!state.stats) state.stats = await getJson("/api/strategy/stats");
-    if (state.stats.error) {
-      body.textContent = state.stats.error;
-      state.stats = null;
-    } else {
-      renderReport(state.stats);
-    }
+    state.corr = await getJson("/api/correlation");
+    renderMarket(state.corr, state.scan);
+    renderCorr(state.corr);
   } catch (error) {
-    body.textContent = error.message;
+    node.textContent = error.message;
   }
-  await refreshScan();
+}
+
+async function refreshNews() {
+  const meta = document.getElementById("chart-news-meta");
+  const strategyNode = document.getElementById("strategy-news");
+  try {
+    state.news = await getJson("/api/news");
+    renderChartNews(state.news);
+    if (state.view === "strategy") renderNews(state.news);
+  } catch (error) {
+    if (meta) meta.textContent = error.message;
+    if (strategyNode && state.view === "strategy") strategyNode.textContent = error.message;
+  }
+}
+
+function impactRank(item) {
+  return { high: 3, medium: 2, low: 1 }[item.impact] || 0;
+}
+
+function biasWord(bias) {
+  return { up: "рост", down: "снижение", mixed: "смешанно", none: "нейтрально" }[bias] || "нейтрально";
+}
+
+function renderChartNews(news) {
+  const list = document.getElementById("chart-news-list");
+  const meta = document.getElementById("chart-news-meta");
+  if (!list) return;
+  list.replaceChildren();
+  const updated = news.updated ? `обновлено ${clock(news.updated)}` : "";
+  meta.textContent = `${updated}${news.error ? ` · ${news.error}` : ""} · оценка по заголовку, не прогноз`;
+  const items = [...(news.items || [])].sort((a, b) => impactRank(b) - impactRank(a) || b.time - a.time);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "desk-note";
+    empty.style.padding = "8px";
+    empty.textContent = "Новостей сейчас нет";
+    list.append(empty);
+    return;
+  }
+  for (const item of items) {
+    const link = document.createElement("a");
+    const impact = item.impact || "low";
+    const bias = item.bias || "none";
+    link.className = `chart-news-card ${impact} ${bias === "up" || bias === "down" ? bias : ""}`;
+    link.href = item.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const coins = (item.coins || []).length ? ` · ${(item.coins || []).join(", ")}` : "";
+    link.innerHTML = `<div class="news-top">`
+      + `<i class="impact-dot ${impact}"></i>`
+      + `<span class="impact-tag">${impact === "high" ? "высокий" : impact === "medium" ? "средний" : "низкий"}</span>`
+      + `<span class="bias-${bias}">${biasWord(bias)}</span>`
+      + `<span>${newsAge(item.time)}</span>`
+      + `<span>${escapeHtml(item.source)}</span>`
+      + `</div>`
+      + `<b>${escapeHtml(item.title)}</b>`
+      + `<span class="impact-why">Импакт: ${escapeHtml(item.reason || "общий фон")}${coins}</span>`;
+    list.append(link);
+  }
+}
+
+function renderStatus(paper) {
+  const node = document.getElementById("strategy-status");
+  node.replaceChildren();
+  const hero = document.createElement("div");
+  hero.className = `hero ${paper?.paused ? "warn" : "ok"}`;
+  const mix = paper?.summary?.mix;
+  const title = paper?.paused ? "Бот на паузе" : "Набор статистики · 10–20 сделок/день";
+  const why = paper?.paused
+    ? "Новых входов нет. Разметка и исследование на месте."
+    : "Микс A+B+C + V-паттерны + watch/SMC. Риск ~2% на сделку, холд до 3ч, скан каждые 2 мин. Бумага — без заявок на Binance. Это для анализа, не обещание плюса.";
+  hero.innerHTML = `<em>${paper?.paused ? "Статус" : "Статус"}</em><strong>${title}</strong><p>${why}</p>`;
+  const tiles = document.createElement("div");
+  tiles.className = "tiles";
+  if (paper) {
+    const total = paper.equity - paper.start;
+    tiles.append(
+      tile("Счёт", `${money(paper.equity)} USDT`, toneOf(total), `${signedMoney(total)} от ${money(paper.start)}`),
+      tile("Сделок по миксу", mix ? String(mix.n) : "0", "", mix ? `цель ${mix.target} · стоп ${mix.stop} · время ${mix.time}` : ""),
+      tile("Итог микса", mix ? `${signedMoney(mix.pnl)} USDT` : "—", mix ? toneOf(mix.pnl) : ""),
+      tile("Что дальше", "ждём решения", "warn", "запуск только после вашего «да»"),
+    );
+  }
+  hero.append(tiles);
+  node.append(hero);
+}
+
+function renderRules() {
+  const node = document.getElementById("strategy-rules");
+  node.replaceChildren();
+  const block = section(node, "Правила стратегии «микс»", "Три паттерна на 15m по 50 монетам. Вход только когда старшие таймфреймы и BTC согласны. Это проверка на прошлом, а не обещание прибыли.");
+  const grid = document.createElement("div");
+  grid.className = "rule-grid";
+  const cards = [
+    ["Что торгуем", ["A — сжатие и пробой с объёмом", "B — голова и плечи", "C — двойное дно / вершина", "Лонг и шорт по направлению фигуры"], "Остальные 12 паттернов отдельно в минусе за год."],
+    ["Когда вход сильный", ["Тренд 4h по ходу сделки", "BTC 1h по ходу (кроме самого BTC)", "Волатильность в топ-34% за 30 дней (≥66%)", "Для C ещё тренд 1h", "До цели осталось ≥1.5 стопа"], "Сжатие A не берём на монетах, которые «живут сами» (TRX, QNT, STRK)."],
+    ["Стоп, цель, размер", ["Стоп за структурой паттерна, не уже 0.5% цены", "Цель 2 стопа · выход через 8 часов", "Риск 5% счёта на сделку", "Плечо на сделку ≤5×, по счёту ≤20×"], "На бумаге вход по рынку в первые 30 минут; в истории считался лимит по цене сигнала."],
+    ["Связь с BTC", ["Корреляция и бета за год и за 7/30 дней", "При срыве BTC смотрим, следует ли монета", "Монеты «живут сами» торгуем без опоры на BTC-лаг", "Новости ниже — фон, не сигнал входа"], "Сильный сигнал не берём против тренда BTC 1h."],
+    ["Чего не делаем", ["Не входим против 4h", "Не усредняем после стопа", "Не сужаем стоп «чтобы влезло плечо»", "Не торгуем, пока бот на паузе без вашего «да»"], "Уроки бумажных сделок на LTC и ETH."],
+    ["Как читать панель", ["Зелёные галочки — условие выполнено", "«Может стать сильным» — ждём закрытие за уровнем", "Красные точки на графике — прошлые сильные", "Жёлтый коридор — сжатие A"], "Полный текст: docs/STRATEGY.md и docs/RESEARCH.md."],
+  ];
+  for (const [title, lines, note] of cards) {
+    const card = document.createElement("div");
+    card.className = "rule";
+    card.innerHTML = `<b>${title}</b><ul>${lines.map((line) => `<li>${line}</li>`).join("")}</ul><small>${note}</small>`;
+    grid.append(card);
+  }
+  block.append(grid);
+}
+
+function trendLabel(value) {
+  if (value > 0) return { text: "вверх", tone: "up" };
+  if (value < 0) return { text: "вниз", tone: "down" };
+  return { text: "боковик", tone: "" };
+}
+
+function renderMarket(corr, scan) {
+  const node = document.getElementById("strategy-market");
+  node.replaceChildren();
+  const btc = corr?.btc;
+  const block = section(node, "Рынок сейчас", "Фон для стратегии: куда смотрит BTC и сколько монет готовы к сильному сигналу.");
+  const tiles = document.createElement("div");
+  tiles.className = "tiles";
+  const trend = trendLabel(btc?.trend4h || 0);
+  tiles.append(
+    tile("BTC 1h", btc?.move1h == null ? "—" : `${signed(btc.move1h, 2)}%`, toneOf(btc?.move1h), btc?.price ? `цена ${formatPrice(btc.price)}` : ""),
+    tile("BTC 4h", btc?.move4h == null ? "—" : `${signed(btc.move4h, 2)}%`, toneOf(btc?.move4h), `тренд ${trend.text}`),
+    tile("BTC 24h", btc?.move24h == null ? "—" : `${signed(btc.move24h, 2)}%`, toneOf(btc?.move24h)),
+    tile("Сильных сейчас", String(scan?.strong?.length || 0), scan?.strong?.length ? "up" : "", "по стратегии «микс»"),
+    tile("Могут стать", String(scan?.watch?.length || 0), "warn", "ждём закрытие / волатильность"),
+    tile("Были за 48ч", String(scan?.recent?.length || 0), "", "уже закрытые или просроченные"),
+  );
+  block.append(tiles);
+  if (corr?.groups) {
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    for (const [name, count] of Object.entries(corr.groups)) {
+      const chip = document.createElement("span");
+      chip.className = "chip static";
+      chip.textContent = `${name}: ${count}`;
+      chips.append(chip);
+    }
+    block.append(chips);
+  }
+}
+
+function renderCorr(corr) {
+  const node = document.getElementById("strategy-corr");
+  node.replaceChildren();
+  const updated = corr.updated ? `обновлено ${clock(corr.updated)}` : "";
+  const block = section(node, "Связь с BTC", `Корреляция и бета за год + живые окна 7 и 30 дней по часовым свечам. ${updated}${corr.error ? ` · ${corr.error}` : ""}`);
+  const note = document.createElement("p");
+  note.className = "desk-note";
+  note.textContent = "Корр. близко к 1 — монета ходит как BTC. Бета >1 — ходит сильнее. «За сливом» — доля случаев, когда при резком падении BTC монета тоже упала. Нажмите строку, чтобы открыть график.";
+  block.append(note);
+  const rows = (corr.coins || []).map((item) => [
+    prettySymbol(item.symbol),
+    item.label || "—",
+    item.corr1h?.toFixed(2) ?? "—",
+    item.beta1h?.toFixed(2) ?? "—",
+    item.live7d ? item.live7d.corr.toFixed(2) : "—",
+    item.live30d ? item.live30d.corr.toFixed(2) : "—",
+    item.dumpFollow == null ? "—" : percent(item.dumpFollow),
+    item.dumpMoveVsBtc == null ? "—" : `x${item.dumpMoveVsBtc}`,
+    item.ownMovesShare == null ? "—" : percent(item.ownMovesShare),
+    item.move1h == null ? "—" : { text: `${signed(item.move1h, 2)}%`, tone: toneOf(item.move1h) },
+  ]);
+  const tableNode = table(
+    ["Монета", "Группа", "Корр. год", "Бета", "Корр. 7д", "Корр. 30д", "За сливом", "vs BTC", "Свои", "1h"],
+    rows,
+  );
+  tableNode.classList.add("corr-table");
+  const bodyRows = tableNode.tBodies[0]?.rows || [];
+  for (let i = 0; i < bodyRows.length; i += 1) {
+    const symbol = corr.coins[i].symbol;
+    bodyRows[i].classList.add("click-row");
+    if (symbol === state.symbol) bodyRows[i].classList.add("active");
+    bodyRows[i].addEventListener("click", () => openCoin(symbol));
+  }
+  block.append(tableNode);
+}
+
+function newsAge(unix) {
+  const minutes = Math.max(0, Math.round((Date.now() / 1000 - unix) / 60));
+  if (minutes < 60) return `${minutes} мин`;
+  if (minutes < 48 * 60) return `${Math.round(minutes / 60)} ч`;
+  return `${Math.round(minutes / 1440)} дн`;
+}
+
+function renderNews(news) {
+  const node = document.getElementById("strategy-news");
+  node.replaceChildren();
+  const updated = news.updated ? `обновлено ${clock(news.updated)}` : "";
+  const block = section(node, "Новости", `Google News и CoinDesk · импакт по заголовку, не сигнал входа · ${updated}${news.error ? ` · ${news.error}` : ""}`);
+  if (!news.items?.length) {
+    const empty = document.createElement("p");
+    empty.className = "desk-note";
+    empty.textContent = "Новостей сейчас нет или лента недоступна.";
+    block.append(empty);
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "news-list";
+  const items = [...news.items].sort((a, b) => impactRank(b) - impactRank(a) || b.time - a.time);
+  for (const item of items) {
+    const link = document.createElement("a");
+    const impact = item.impact || "low";
+    const bias = item.bias || "none";
+    link.className = `news-item impact-${impact}`;
+    link.href = item.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const coins = (item.coins || []).length ? ` · ${(item.coins || []).join(", ")}` : "";
+    link.innerHTML = `<div class="news-meta">`
+      + `<span><i class="impact-dot ${impact}"></i>${escapeHtml(item.impactLabel || impact)} · ${escapeHtml(item.source)}</span>`
+      + `<span>${newsAge(item.time)}</span></div>`
+      + `<b>${escapeHtml(item.title)}</b>`
+      + `<span class="bias-${bias}">Импакт: ${escapeHtml(item.reason || "общий фон")}${coins}</span>`
+      + (item.summary ? `<span>${escapeHtml(item.summary)}</span>` : "");
+    list.append(link);
+  }
+  block.append(list);
+}
+
+function verdictBadge(verdict) {
+  const tone = { "плюс": "up", "около нуля": "", "нестабильно": "warn", "минус": "down" }[verdict] || "";
+  return { text: verdict, tone, badge: true };
+}
+
+function renderLab(lab) {
+  const node = document.getElementById("strategy-lab");
+  node.replaceChildren();
+  const block = section(node, "Что проверено за год истории", "Каждая строка — семейство правил на 50 монетах. Обучение: первые 8 месяцев, проверка: последние 4. Итог в стопах после комиссии 0.1% за круг.");
+  const tiles = document.createElement("div");
+  tiles.className = "tiles";
+  tiles.append(
+    tile("Семейств проверено", String(lab.tested)),
+    tile("В плюсе на обучении и проверке", String(lab.plus), lab.plus ? "up" : "down"),
+    tile("С попаданием ≥70%", String(lab.highHit), "", `из них в плюсе: ${lab.highHitPlus}`),
+    tile("Вывод", lab.highHitPlus ? "есть кандидат" : "70% и плюс вместе не нашлись", lab.highHitPlus ? "up" : "warn", "частое попадание съедает комиссия и мелкая цель"),
+  );
+  block.append(tiles);
+
+  const filters = document.createElement("div");
+  filters.className = "chips";
+  const timeframes = [...new Set(lab.families.map((item) => item.timeframe))];
+  let active = "все";
+  const draw = () => {
+    const rows = lab.families.filter((item) => active === "все" || item.timeframe === active);
+    const existing = block.querySelector("table");
+    if (existing) existing.remove();
+    block.append(table(["Семейство", "Группа", "ТФ", "Стиль", "Цель", "Сигналов", "Попадание", "Обучение", "Проверка", "Вердикт"], rows.map((item) => [
+      item.name, item.group, item.timeframe, item.style, item.target, item.n.toLocaleString("en-US"), percent(item.hit), toned(item.train), toned(item.test), verdictBadge(item.verdict),
+    ])));
+  };
+  for (const name of ["все", ...timeframes]) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = `chip${name === active ? " active" : ""}`;
+    chip.textContent = name;
+    chip.addEventListener("click", () => {
+      active = name;
+      for (const other of filters.children) other.classList.toggle("active", other === chip);
+      draw();
+    });
+    filters.append(chip);
+  }
+  block.append(filters);
+  draw();
+
+  const lessons = section(node, "Уроки из ошибок", "Что пошло не так на бумажных сделках и в исследовании, и какое правило из этого вытекло.");
+  const grid = document.createElement("div");
+  grid.className = "rule-grid";
+  for (const lesson of lab.lessons) {
+    const card = document.createElement("div");
+    card.className = "rule lesson";
+    card.innerHTML = `<b>${escapeHtml(lesson.title)}</b><p>${escapeHtml(lesson.text)}</p>`;
+    grid.append(card);
+  }
+  lessons.append(grid);
 }
 
 async function refreshScan() {
@@ -999,6 +1582,7 @@ async function refreshScan() {
     return;
   }
   renderScan(state.scan);
+  if (state.view === "strategy" && state.corr) renderMarket(state.corr, state.scan);
 }
 
 function openCoin(symbol) {
@@ -1040,10 +1624,8 @@ function scanColumn(title, items, render, empty) {
 function renderScan(scan) {
   const node = document.getElementById("strategy-live");
   node.replaceChildren();
-  const head = document.createElement("p");
-  head.className = "desk-note";
   const updated = scan.updated ? `обновлено ${clock(scan.updated)}` : "первый проход по 50 монетам, около минуты";
-  head.textContent = `Поиск по 50 монетам на 15m каждые 5 минут · ${updated}${scan.running ? " · идёт обновление" : ""}${scan.error ? ` · ошибка: ${scan.error}` : ""}`;
+  const block = section(node, "Сейчас на рынке", `Поиск по 50 монетам на 15m каждые 5 минут · ${updated}${scan.running ? " · идёт обновление" : ""}${scan.error ? ` · ошибка: ${scan.error}` : ""}`);
   const columns = document.createElement("div");
   columns.className = "scan";
   const outcome = { target: "цель", stop: "стоп", time: "по времени", open: "в работе", active: "вход действует" };
@@ -1058,7 +1640,7 @@ function renderScan(scan) {
       `${clock(item.entryTime)} · итог: <b class="${item.outcome.r > 0 ? "up" : "down"}">${outcome[item.outcome.status]}${item.outcome.r != null ? ` (${signed(item.outcome.r, 1)} стопа)` : ""}</b>`
     ), "За двое суток сильных сигналов не было"),
   );
-  node.append(head, columns);
+  block.append(columns);
 }
 
 function percent(value) {
@@ -1078,7 +1660,12 @@ function table(headers, rows) {
     const line = body.insertRow();
     for (const value of row) {
       const cell = line.insertCell();
-      if (value && typeof value === "object") {
+      if (value && typeof value === "object" && value.badge) {
+        const badge = document.createElement("span");
+        badge.className = `badge ${value.tone || ""}`;
+        badge.textContent = value.text;
+        cell.append(badge);
+      } else if (value && typeof value === "object") {
         cell.textContent = value.text;
         if (value.tone) cell.className = value.tone;
       } else {
@@ -1115,37 +1702,17 @@ function renderReport(stats) {
   body.replaceChildren();
   const folio = stats.portfolio;
   const total = stats.total;
-  const rules = section(body, "Правила стратегии", "Это проверка на прошлом, а не обещание прибыли. Бот на паузе, пока вы не решите запускать.");
-  const list = document.createElement("ul");
-  for (const line of [
-    "15m, все 50 монет. Паттерны: A — сжатие и пробой с объёмом, B — голова и плечи, C — двойное дно или вершина.",
-    "Сильный сигнал: тренд 4h и BTC 1h по ходу сделки, волатильность от 66% за 30 дней; для C ещё тренд 1h. Вход по рынку, пока до цели остаётся хотя бы 1 стоп.",
-    "Сжатие A не торгуется на монетах, которые живут сами (TRX, QNT, STRK).",
-    "Вход лимитом по цене сигнала (ждём 30 минут), стоп за структурой, цель 2 стопа, выход по времени через 8 часов. Не больше 2 сделок.",
-  ]) {
-    const item = document.createElement("li");
-    item.textContent = line;
-    list.append(item);
-  }
-  rules.append(list);
 
-  const result = section(body, "Что показал год истории");
-  const kpis = document.createElement("div");
-  kpis.className = "kpis";
-  for (const [label, value] of [
-    ["Сильных сигналов", total.n],
-    ["Цель достигнута", percent(total.hit2)],
-    ["Средний итог", `${signed(total.r2)} стопа`],
-    ["Обучение / проверка", `${signed(total.train)} / ${signed(total.test)}`],
-    ["В портфеле до 2", `${folio.trades} сделок, ~${folio.perDay} в день`],
-    ["Средний итог в портфеле", `${signed(folio.mean, 3)} стопа`],
-    ["Серия минусов", folio.streak],
-  ]) {
-    const card = document.createElement("div");
-    card.innerHTML = `<span>${label}</span><b>${value}</b>`;
-    kpis.append(card);
-  }
-  result.append(kpis);
+  const result = section(body, "Микс за год истории", "Сильные сигналы A+B+C с фильтрами. Портфель: не больше 2 сделок одновременно, цель 2 стопа.");
+  const tiles = document.createElement("div");
+  tiles.className = "tiles";
+  tiles.append(
+    tile("Сильных сигналов", String(total.n), "", `~${folio.perDay} сделки в день в портфеле`),
+    tile("Цель достигнута", percent(total.hit2), total.hit2 >= 0.34 ? "up" : "warn", "для безубытка при цели 2 стопа нужно 33%"),
+    tile("Средний итог", `${signed(total.r2)} стопа`, toneOf(total.r2), `обучение ${signed(total.train)} · проверка ${signed(total.test)}`),
+    tile("В портфеле", `${signed(folio.mean, 3)} стопа`, toneOf(folio.mean), `${folio.trades} сделок · серия минусов до ${folio.streak}`),
+  );
+  result.append(tiles);
   const risks = Object.entries(folio.risks);
   result.append(table(["Риск на сделку", "200$ через год", "Худшая просадка"], risks.map(([risk, item]) => [
     `${Math.round(Number(risk) * 100)}%`, `${money(item.final)}$`, { text: percent(item.drawdown), tone: "down" },
@@ -1159,10 +1726,10 @@ function renderReport(stats) {
   result.append(legendNote);
   drawEquity(equity, folio.risks);
 
-  const months = section(body, "По месяцам", "Сумма результатов сделок портфеля в стопах.");
+  const months = folded(body, "По месяцам", "Сумма результатов сделок портфеля в стопах.");
   months.append(table(["Месяц", "Сделок", "Итог"], folio.months.map((row) => [row.month, row.n, toned(row.r, 1)])));
 
-  const groups = section(body, "Паттерны по группам монет", "Цель — доля сделок, дошедших до 2 стопов. Итог — средний результат после комиссий.");
+  const groups = folded(body, "Паттерны по группам монет", "Цель — доля сделок, дошедших до 2 стопов. Итог — средний результат после комиссий.");
   const order = ["BTC", "повторяет BTC", "повторяет BTC с усилением", "живёт сама"];
   const rows = [];
   for (const [letter, item] of Object.entries(stats.patterns)) {
@@ -1173,16 +1740,32 @@ function renderReport(stats) {
   }
   groups.append(table(["Паттерн", "Группа", "Сигналов", "Цель", "Итог"], rows));
 
-  const singles = section(body, "Что не работает само по себе", "Каждый из 15 паттернов отдельно, без фильтров: обучение (первые 8 месяцев) и проверка (последние 4).");
+  const singles = folded(body, "15 паттернов по отдельности", "Без фильтров каждый в минусе: обучение (первые 8 месяцев) и проверка (последние 4).");
   singles.append(table(["Паттерн", "Сигналов", "Цель 2", "Обучение", "Проверка", "Комиссия, стопа"], stats.singles.map((item) => [
     item.name, item.n, percent(item.hit2), toned(item.train), toned(item.test), item.cost.toFixed(2),
   ])));
 
-  const cards = section(body, "Карточки монет", `Цифры по монете показаны от ${MIN_COIN_SAMPLE} сигналов; иначе правила группы. Нажмите на монету, чтобы открыть её график. Полный текст: docs/STRATEGY.md.`);
+  const cards = folded(body, "Карточки 50 монет", `Цифры по монете показаны от ${MIN_COIN_SAMPLE} сигналов; иначе правила группы. Нажмите на монету, чтобы открыть её график. Полный текст: docs/STRATEGY.md.`);
   const grid = document.createElement("div");
   grid.className = "coin-grid";
   for (const card of stats.coins) grid.append(coinCard(card));
   cards.append(grid);
+}
+
+function folded(parent, title, note) {
+  const block = document.createElement("details");
+  block.className = "report-block";
+  const summary = document.createElement("summary");
+  summary.textContent = title;
+  block.append(summary);
+  if (note) {
+    const text = document.createElement("p");
+    text.className = "desk-note";
+    text.textContent = note;
+    block.append(text);
+  }
+  parent.append(block);
+  return block;
 }
 
 function coinCard(card) {

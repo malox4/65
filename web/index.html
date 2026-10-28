@@ -36,8 +36,7 @@
   </aside>
   <div id="board">
   <aside id="desk" class="desk">
-    <strong>Бумажный счёт · 2000 USDT · число монет без лимита</strong>
-    <div id="desk-body">Считаю вход</div>
+    <div id="desk-body" class="tiles"><span class="desk-note">Подключаюсь к бумажному счёту</span></div>
   </aside>
   <main>
     <div id="legend"></div>
@@ -46,10 +45,28 @@
       <div id="chart"></div>
       <svg id="figures" aria-hidden="true"></svg>
     </div>
+    <aside id="chart-news" class="chart-news" aria-label="Новости">
+      <div class="chart-news-head">
+        <strong>Новости</strong>
+        <span id="chart-news-meta" class="desk-note">загружаю ленту</span>
+        <span class="chart-news-legend">
+          <i class="impact-dot high"></i>высокий
+          <i class="impact-dot medium"></i>средний
+          <i class="impact-dot low"></i>низкий
+        </span>
+      </div>
+      <div id="chart-news-list" class="chart-news-list"></div>
+    </aside>
   </main>
   </div>
   <section id="strategy" aria-label="Стратегия">
+    <div id="strategy-status"></div>
+    <div id="strategy-rules"></div>
+    <div id="strategy-market"></div>
+    <div id="strategy-corr"></div>
+    <div id="strategy-news"></div>
     <div id="strategy-live">Жду поиск сигналов</div>
+    <div id="strategy-lab"></div>
     <div id="strategy-body">Загружаю отчёт</div>
   </section>
   </div>

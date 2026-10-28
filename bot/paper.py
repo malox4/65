@@ -18,16 +18,21 @@ DB_PATH = ROOT / "data" / "paper.db"
 SYMBOL = "BTCUSDT"
 START_EQUITY = 2000.0
 MAX_LEVERAGE = 20.0
-RISK_FRACTION = 0.05
+RISK_FRACTION = 0.02  # мельче размер → больше одновременных и сделок в день
 TAKER_FEE = 0.0004
 MAKER_FEE = 0.0002
 ENTRY_SLIPPAGE = 0.0001
 MIN_EQUITY = 15.0
 MAX_OPEN = None
 PAUSED = False
-LOSS_COOLDOWN_SECONDS = 30 * 60
+MAX_TRADE_LEVERAGE = 2.5
+MIN_STOP_PCT = 0.0025
+MIN_REWARD_RATIO = 1.0
+LOSS_COOLDOWN_SECONDS = 5 * 60  # быстрее повтор после стопа
 SCALP_HOLD_SECONDS = HOLD_HOURS * 60 * 60
 STRATEGY_NAME = "mix"
+DAY_TRADE_MIN = 10
+DAY_TRADE_MAX = 20
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS account (
@@ -93,6 +98,8 @@ def snapshot() -> dict:
             )
         ]
         result = _result_line(connection)
+        summary = _summary(connection)
+        day_n = _day_trades(connection)
     finally:
         connection.close()
     day_pnl = account["equity"] + unrealized - account["day_start"]
@@ -100,6 +107,8 @@ def snapshot() -> dict:
         "start": START_EQUITY,
         "equity": round(account["equity"], 2),
         "dayPnl": round(day_pnl, 2),
+        "dayTrades": day_n,
+        "dayTradeAim": [DAY_TRADE_MIN, DAY_TRADE_MAX],
         "halted": account["equity"] < MIN_EQUITY,
         "note": error or note,
         "positions": positions,
@@ -112,7 +121,30 @@ def snapshot() -> dict:
         "leverageCap": MAX_LEVERAGE,
         "maxOpen": MAX_OPEN,
         "risk": RISK_FRACTION,
+        "paused": PAUSED,
+        "summary": summary,
     }
+
+
+def _summary(connection: sqlite3.Connection) -> dict:
+    rows = connection.execute("SELECT status, pnl, reason FROM trades WHERE status != 'open'").fetchall()
+    out = {}
+    for key in ("mix", "volume", "old"):
+        out[key] = {"n": 0, "target": 0, "stop": 0, "time": 0, "pnl": 0.0}
+    for row in rows:
+        reason = row["reason"] or ""
+        if reason.startswith("микс") or reason.startswith("watch"):
+            key = "mix"
+        elif reason.startswith("объём") or reason.startswith("SMC") or reason.startswith("watch≈"):
+            key = "volume"
+        else:
+            key = "old"
+        bucket = out[key]
+        bucket["n"] += 1
+        if row["status"] in bucket:
+            bucket[row["status"]] += 1
+        bucket["pnl"] = round(bucket["pnl"] + (row["pnl"] or 0.0), 2)
+    return out
 
 
 def step() -> None:
@@ -192,43 +224,129 @@ def _step() -> None:
         connection.close()
 
 
+def _day_trades(connection: sqlite3.Connection) -> int:
+    """Сколько сделок открыто сегодня (UTC-день счёта)."""
+    day = _account(connection)["day"]
+    row = connection.execute(
+        "SELECT COUNT(*) AS n FROM trades WHERE opened_at >= ?",
+        (f"{day}T00:00:00+00:00",),
+    ).fetchone()
+    return int(row["n"] if row else 0)
+
+
 def _take_signals(connection: sqlite3.Connection, account: dict) -> str | None:
-    """Лимитный вход по сильным сигналам стратегии. Число монет не ограничено, суммарное плечо не выше потолка."""
+    """Набор статистики: цель 10–20 сделок/день. Сильные + watch + V-паттерны + SMC-призрак."""
     board = SCANNER.snapshot()
     if not board["updated"]:
         return "Жду первый разбор 50 монет"
+    today = _day_trades(connection)
+    if today >= DAY_TRADE_MAX:
+        opens = _open_trades(connection)
+        names = ", ".join(_pair(p["symbol"]) for p in opens)
+        return f"Лимит дня {DAY_TRADE_MAX} сделок. Сегодня {today}" + (f". Открыты {names}" if names else "")
+
     opens = _open_trades(connection)
     busy = {position["symbol"] for position in opens}
     used = sum(position["notional"] for position in opens)
     opened = []
     waiting = 0
     capped = False
+    hungry = today < DAY_TRADE_MIN
+
+    candidates = []
     for item in board["strong"]:
         status = item.get("outcome", {}).get("status")
         if status not in {"active", "open"}:
             continue
         if time.time() > item["entryTime"] + HOLD_HOURS * 3600:
             continue
+        letter = item.get("letter", "?")
+        tag = "микс" if letter in {"A", "B", "C"} else "объём"
+        candidates.append({
+            "symbol": item["symbol"],
+            "side": item["side"],
+            "stop": float(item["stop"]),
+            "target": float(item["target"]),
+            "level": float(item["entry"]),
+            "text": f"{tag} {letter}: {item['name']}",
+            "need_cross": False,
+            "priority": 0 if letter in {"A", "B", "C"} else 2,
+        })
+    for item in board.get("watch") or []:
+        # готовые всегда; недозрелые — если ещё мало сделок за день
+        if not item.get("ready") and not hungry:
+            continue
+        if not item.get("ready") and item.get("missing") and any("против" in m for m in item["missing"]):
+            continue
+        letter = item.get("letter", "?")
+        tag = "watch" if item.get("ready") else "watch≈"
+        candidates.append({
+            "symbol": item["symbol"],
+            "side": item["side"],
+            "stop": float(item["stop"]),
+            "target": float(item["target"]),
+            "level": float(item["level"]),
+            "text": f"{tag} {letter}: {item['name']}",
+            "need_cross": True,
+            "priority": 1 if item.get("ready") else 3,
+        })
+
+    # SMC ghost из кэша сканера, если день ещё «голодный» (без тяжёлого analyze на каждый цикл)
+    if hungry:
+        for symbol in list(board.get("coins") or {})[:20]:
+            if symbol in busy:
+                continue
+            coin = SCANNER.coin(symbol)
+            ghost = (coin or {}).get("map", {}).get("ghost") if coin else None
+            if not ghost or ghost.get("stop") is None or ghost.get("target") is None:
+                continue
+            side = 1 if ghost.get("bull") else -1
+            candidates.append({
+                "symbol": symbol,
+                "side": side,
+                "stop": float(ghost["stop"]),
+                "target": float(ghost["target"]),
+                "level": float(ghost.get("open") or coin.get("price") or 0),
+                "text": f"SMC призрак: {ghost.get('text') or ghost.get('reason') or 'сценарий'}",
+                "need_cross": False,
+                "priority": 4,
+            })
+
+    candidates.sort(key=lambda c: c["priority"])
+
+    for item in candidates:
+        if _day_trades(connection) >= DAY_TRADE_MAX:
+            break
         if item["symbol"] in busy:
             continue
         side = "long" if item["side"] > 0 else "short"
-        stop, target = float(item["stop"]), float(item["target"])
+        stop, target, level = item["stop"], item["target"], item["level"]
         try:
             mark = float(fetch_ticker(item["symbol"], "spot")["lastPrice"])
         except Exception:
             waiting += 1
             continue
+        if item["need_cross"]:
+            pad = abs(level) * 0.0005
+            if side == "long" and mark < level - pad:
+                continue
+            if side == "short" and mark > level + pad:
+                continue
         risk = (mark - stop) if side == "long" else (stop - mark)
         reward = (target - mark) if side == "long" else (mark - target)
-        if risk <= 0 or reward / risk < 1:
+        if risk <= 0 or reward / risk < MIN_REWARD_RATIO:
+            continue
+        stop_pct = risk / mark
+        if stop_pct < MIN_STOP_PCT:
+            continue
+        if _symbol_cooling(connection, item["symbol"]):
             continue
         equity = _account(connection)["equity"]
         room = equity * MAX_LEVERAGE - used
-        stop_pct = risk / mark
         if room < 10:
             capped = True
             continue
-        notional = min(room, equity * MAX_LEVERAGE, equity * RISK_FRACTION / stop_pct)
+        notional = min(room, equity * MAX_TRADE_LEVERAGE, equity * RISK_FRACTION / stop_pct)
         if notional < 10:
             capped = True
             continue
@@ -238,23 +356,24 @@ def _take_signals(connection: sqlite3.Connection, account: dict) -> str | None:
             "stop": stop,
             "target": target,
             "time": int(time.time()),
-            "text": f"микс {item['letter']}: {item['name']}",
+            "text": item["text"],
         }
         _open(connection, account, setup, mark, item["symbol"], notional=notional)
         used += notional
         busy.add(item["symbol"])
         opened.append(f"{_pair(item['symbol'])} {'лонг' if side == 'long' else 'шорт'}")
         account = _account(connection)
+    today = _day_trades(connection)
     if opened:
-        extra = ". Ещё сигналы не влезли в плечо 20" if capped else ""
-        return f"Вошёл по рынку: {', '.join(opened)}. Стоп сигнала, цель 2 стопа{extra}"
+        extra = ". Плечо забито" if capped else ""
+        return f"Вошёл: {', '.join(opened)}. Сегодня {today}/{DAY_TRADE_MAX} (цель {DAY_TRADE_MIN}+){extra}"
     if capped:
-        return "Сильные сигналы есть, но суммарное плечо уже 20. Новые не беру"
+        return f"Сигналы есть, плечо 20 занято. Сегодня {today}/{DAY_TRADE_MAX}"
     if waiting:
-        return "Сильный сигнал есть, цену сейчас не получил"
+        return f"Сигнал есть, цену не получил. Сегодня {today}/{DAY_TRADE_MAX}"
     if opens:
-        return None
-    return "Сильных сигналов нет. Депозит 2000 USDT, число монет без лимита"
+        return f"Открыты {', '.join(_pair(p['symbol']) for p in opens)}. Сегодня {today}/{DAY_TRADE_MAX}, цель {DAY_TRADE_MIN}–{DAY_TRADE_MAX}/день"
+    return f"Ищу входы · сегодня {today}/{DAY_TRADE_MAX}, цель {DAY_TRADE_MIN}–{DAY_TRADE_MAX} сделок/день"
 
 
 def _limit_alive(symbol: str, side: str, entry: float, stop: float, since: int) -> bool:

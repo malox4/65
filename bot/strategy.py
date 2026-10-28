@@ -14,6 +14,7 @@ import time
 from bot import history
 from bot.research.indicators import Series, is_finite
 from bot.research.patterns import MAX_RISK_ATR, MAX_RISK_PCT, MIN_RISK_ATR, MIN_RISK_PCT, Market, detect
+from bot.smc_map import build as build_smc_map
 
 ROOT = Path(__file__).resolve().parent.parent
 STATS_PATH = ROOT / "data" / "research" / "strategy_stats.json"
@@ -24,28 +25,45 @@ PATTERNS = {
     "head_shoulders": {"letter": "B", "name": "голова и плечи"},
     "double": {"letter": "C", "name": "двойное дно / вершина"},
 }
+# Доп. паттерны для набора статистики 10–20 сделок/день (не «ядро» микса).
+VOLUME_PATTERNS = {
+    **PATTERNS,
+    "order_block": {"letter": "V", "name": "ордер-блок"},
+    "bos_retest": {"letter": "V", "name": "BOS ретест"},
+    "choch": {"letter": "V", "name": "CHoCH"},
+    "sweep_fvg": {"letter": "V", "name": "снятие + FVG"},
+    "flag": {"letter": "V", "name": "флаг"},
+    "trend_pullback": {"letter": "V", "name": "откат к EMA"},
+}
 STRONG_RANK = 0.75
-ENTRY_RANK = 0.66
+ENTRY_RANK = 0.35  # режим набора статистики
 TARGET_R = 2.0
-HOLD_HOURS = 8
-LIMIT_WAIT_BARS = 2
+HOLD_HOURS = 3  # быстрее оборот → больше сделок в день
+LIMIT_WAIT_BARS = 4
 INDEPENDENT = "живёт сама"
+SOFT_BTC_RANK = 0.55
 LOOKBACK_DAYS = 40
-RECENT_HOURS = 48
-SCAN_SECONDS = 300
+RECENT_HOURS = 36
+SCAN_SECONDS = 120  # чаще скан
 
 
 def check(pattern: str, h1: int, h4: int, btc_h1: int, atr_rank: float, label: str, rank_min: float = STRONG_RANK) -> list[str]:
-    """Чего не хватает до сильного сигнала. Пустой список: все условия выполнены. Тренды даны по стороне сделки."""
+    """Чего не хватает до сигнала. Пустой список: можно входить. Тренды даны по стороне сделки."""
+    catalog = VOLUME_PATTERNS
     missing = []
-    if pattern not in PATTERNS:
+    if pattern not in catalog:
         return ["паттерн не из стратегии"]
     if pattern == "squeeze" and label == INDEPENDENT:
         return ["сжатие не работает на монетах, которые живут сами"]
-    if h4 != 1:
-        missing.append("тренд 4h не по ходу")
-    if btc_h1 != 1:
-        missing.append("BTC 1h не по ходу")
+    # Для V-паттернов 4h мягче: достаточно не против (0 допускается)
+    if pattern in PATTERNS:
+        if h4 != 1:
+            missing.append("тренд 4h не по ходу")
+    elif h4 < 0:
+        missing.append("тренд 4h против")
+    soft_btc = is_finite(atr_rank) and atr_rank >= SOFT_BTC_RANK
+    if btc_h1 < 0 and not soft_btc:
+        missing.append("BTC 1h против")
     if pattern == "double" and h1 != 1:
         missing.append("тренд 1h не по ходу")
     if not (is_finite(atr_rank) and atr_rank >= rank_min):
@@ -139,6 +157,22 @@ def analyze(symbol: str, links: dict | None = None, stats: dict | None = None, b
     a = float(market.atr[last])
     rank = float(market.atr_rank[last]) if is_finite(market.atr_rank[last]) else None
     trends = {"h1": market.h1_trend(last), "h4": market.h4_trend(last), "btc_h1": market.btc_h1_trend(last)}
+    link = None if symbol == "BTCUSDT" else {
+        "corr15m": card.get("corr15m"),
+        "corr1h": card.get("corr1h"),
+        "beta1h": card.get("beta1h"),
+        "ownMovesShare": card.get("ownMovesShare"),
+        "dumpFollow": (card.get("shock15m") or {}).get("dump", {}).get("followShare"),
+        "dumpMoveVsBtc": (card.get("shock15m") or {}).get("dump", {}).get("moveVsBtc"),
+        "pumpFollow": (card.get("shock15m") or {}).get("pump", {}).get("followShare"),
+        "lagBars": (card.get("leadLag5m") or {}).get("bestLag"),
+        "sameBarCorr": (card.get("leadLag5m") or {}).get("sameBar"),
+    }
+    try:
+        smc = build_smc_map(market)
+    except Exception as error:
+        smc = {"ok": False, "reason": repr(error)}
+
     result = {
         "symbol": symbol,
         "label": label,
@@ -147,19 +181,22 @@ def analyze(symbol: str, links: dict | None = None, stats: dict | None = None, b
         "price": float(s15.close[last]),
         "atrRank": rank,
         "trends": trends,
+        "link": link,
+        "map": smc,
         "strong": [],
         "recent": [],
         "watch": [],
     }
 
     for signal in signals:
-        if signal["pattern"] not in PATTERNS or signal["entry_time"] < time.time() - RECENT_HOURS * 3600:
+        if signal["pattern"] not in VOLUME_PATTERNS or signal["entry_time"] < time.time() - RECENT_HOURS * 3600:
             continue
         if check(signal["pattern"], signal["h1"], signal["h4"], signal["btc_h1"], signal["atr_rank"], label, ENTRY_RANK):
             continue
         side, entry, stop = signal["side"], signal["entry"], signal["stop"]
         target = entry + side * TARGET_R * signal["risk"]
-        info = PATTERNS[signal["pattern"]]
+        info = VOLUME_PATTERNS[signal["pattern"]]
+        core = signal["pattern"] in PATTERNS
         item = {
             "pattern": signal["pattern"],
             "letter": info["letter"],
@@ -172,7 +209,8 @@ def analyze(symbol: str, links: dict | None = None, stats: dict | None = None, b
             "target": target,
             "riskPct": round(signal["risk_pct"] * 100, 2),
             "atrRank": round(signal["atr_rank"], 2),
-            "stats": _stat_for(stats, info["letter"], symbol, label),
+            "volume": not core,
+            "stats": _stat_for(stats, info["letter"], symbol, label) if core else None,
         }
         start = signal["i"] + 1
         if signal["i"] >= last - (LIMIT_WAIT_BARS - 1):
@@ -198,9 +236,13 @@ def _watch(market: Market, tail: dict, last: int, a: float, rank, trends: dict, 
             return
         h1, h4, btc_h1 = trends["h1"] * side, trends["h4"] * side, trends["btc_h1"] * side
         missing = check(pattern, h1, h4, btc_h1, rank if rank is not None else float("nan"), label, ENTRY_RANK)
-        if any("не работает" in reason or "не по ходу" in reason for reason in missing):
+        # В volume-режиме режем только «не работает»; «не по ходу» оставляем как missing, но зону показываем
+        if any("не работает" in reason for reason in missing):
             return
-        info = PATTERNS[pattern]
+        hard = [m for m in missing if "против" in m]
+        if hard:
+            return
+        info = VOLUME_PATTERNS[pattern]
         out.append({
             "pattern": pattern,
             "letter": info["letter"],
@@ -213,7 +255,7 @@ def _watch(market: Market, tail: dict, last: int, a: float, rank, trends: dict, 
             "condition": condition,
             "missing": missing,
             "ready": not missing,
-            "stats": _stat_for(stats, info["letter"], symbol, label),
+            "stats": _stat_for(stats, info["letter"], symbol, label) if pattern in PATTERNS else None,
             **(extra or {}),
         })
 
@@ -258,7 +300,15 @@ class Scanner:
                 "updated": self.state["updated"],
                 "running": self.state["running"],
                 "error": self.state["error"],
-                "rules": {"strongRank": STRONG_RANK, "targetR": TARGET_R, "holdHours": HOLD_HOURS, "patterns": PATTERNS},
+                "rules": {
+                    "strongRank": STRONG_RANK,
+                    "entryRank": ENTRY_RANK,
+                    "targetR": TARGET_R,
+                    "holdHours": HOLD_HOURS,
+                    "patterns": PATTERNS,
+                    "volumePatterns": {k: v for k, v in VOLUME_PATTERNS.items() if k not in PATTERNS},
+                    "dayTradeAim": "10-20",
+                },
                 "strong": sorted((dict(item, symbol=coin["symbol"]) for coin in coins for item in coin.get("strong", [])), key=lambda x: -x["entryTime"]),
                 "watch": [dict(item, symbol=coin["symbol"]) for coin in coins for item in coin.get("watch", [])],
                 "recent": sorted((dict(item, symbol=coin["symbol"]) for coin in coins for item in coin.get("recent", [])), key=lambda x: -x["entryTime"]),

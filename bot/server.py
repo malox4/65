@@ -8,8 +8,10 @@ import sys
 from urllib.parse import parse_qs, urlparse
 
 from bot.binance import fetch_klines, fetch_ticker
+from bot import correlation as corr_api
+from bot import news as news_api
 from bot.paper import snapshot, start as start_paper
-from bot.strategy import SCANNER, STATS_PATH
+from bot.strategy import SCANNER, STATS_PATH, analyze as analyze_coin
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -42,9 +44,23 @@ class ChartHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/strategy":
                 self._json(SCANNER.snapshot())
             elif parsed.path == "/api/strategy/coin":
-                self._json(SCANNER.coin(_symbol(parse_qs(parsed.query))) or {"error": "монета ещё не разобрана"})
+                symbol = _symbol(parse_qs(parsed.query))
+                try:
+                    self._json(analyze_coin(symbol))
+                except Exception as error:
+                    cached = SCANNER.coin(symbol)
+                    self._json(cached or {"error": f"не разобрал монету: {error!r}"})
             elif parsed.path == "/api/strategy/stats":
                 self._json(json.loads(STATS_PATH.read_text(encoding="utf-8")) if STATS_PATH.exists() else {"error": "отчёт не собран"})
+            elif parsed.path == "/api/strategy/families":
+                families = STATS_PATH.with_name("families.json")
+                self._json(json.loads(families.read_text(encoding="utf-8")) if families.exists() else {"error": "сводка не собрана"})
+            elif parsed.path == "/api/correlation":
+                self._json(corr_api.snapshot())
+            elif parsed.path == "/api/correlation/coin":
+                self._json(corr_api.coin(_symbol(parse_qs(parsed.query))) or {"error": "нет данных по связи с BTC"})
+            elif parsed.path == "/api/news":
+                self._json(news_api.snapshot())
             else:
                 self._file(parsed.path)
         except ValueError as error:
@@ -133,6 +149,9 @@ def _one(query, name, default=None):
 def main():
     start_paper()
     SCANNER.start()
+    import threading
+    threading.Thread(target=lambda: corr_api.snapshot(force=True), daemon=True).start()
+    threading.Thread(target=lambda: news_api.snapshot(force=True), daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), ChartHandler)
     print(f"График: http://{HOST}:{PORT}", flush=True)
     server.serve_forever()

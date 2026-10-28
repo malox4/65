@@ -1,0 +1,489 @@
+//@version=6
+// 65 SMC Map: уровень · пробой · фигура · потенциальная свеча
+indicator("65 SMC Map", overlay = true, max_boxes_count = 80, max_lines_count = 50, max_labels_count = 50)
+
+// ── inputs ──────────────────────────────────────────────────────────────
+grpTrend = "Trend"
+lenFast  = input.int(20, "EMA fast", group = grpTrend)
+lenSlow  = input.int(50, "EMA slow", group = grpTrend)
+tf4h     = input.timeframe("240", "HTF 4h", group = grpTrend)
+
+grpSmc = "Smart Money"
+swingLen   = input.int(5, "Swing wing", minval = 2, maxval = 10, group = grpSmc)
+showLevels = input.bool(true, "Структурные уровни", group = grpSmc)
+showBos    = input.bool(true, "BOS / CHoCH", group = grpSmc)
+showOb     = input.bool(true, "Order Block", group = grpSmc)
+showSweep  = input.bool(true, "Снятие ликвидности", group = grpSmc)
+showFvg    = input.bool(true, "FVG имбаланс", group = grpSmc)
+fvgMinAtr  = input.float(0.25, "Мин FVG в ATR", minval = 0.05, step = 0.05, group = grpSmc)
+fvgMax     = input.int(5, "Макс FVG", minval = 1, maxval = 15, group = grpSmc)
+obMax      = input.int(4, "Макс Order Block", minval = 1, maxval = 10, group = grpSmc)
+
+grpFig = "Figures"
+showSqueeze = input.bool(true, "Сжатие", group = grpFig)
+sqBars      = input.int(12, "Свечей сжатия", group = grpFig)
+sqAtr       = input.float(2.5, "Ширина сжатия ATR", group = grpFig)
+showDouble  = input.bool(true, "Двойное дно/вершина", group = grpFig)
+dblTol      = input.float(0.35, "Допуск уровней ATR", group = grpFig)
+
+grpEntry = "Entry"
+showEntries = input.bool(true, "Потенциальный вход", group = grpEntry)
+showGhost   = input.bool(true, "Потенциальная свеча", group = grpEntry)
+needHtf     = input.bool(true, "Только по тренду 4h", group = grpEntry)
+needVol     = input.bool(true, "Объём ≥ 1.5x", group = grpEntry)
+cooldown    = input.int(16, "Пауза между входами", minval = 6, group = grpEntry)
+rr          = input.float(2.0, "Цель в R", group = grpEntry)
+atrLen      = input.int(14, "ATR", group = grpEntry)
+
+// ── helpers ─────────────────────────────────────────────────────────────
+word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
+col(v) => v > 0 ? #0ECB81 : v < 0 ? #F6465D : #848E9C
+
+htfTrend(tf) =>
+    f = request.security(syminfo.tickerid, tf, ta.ema(close, lenFast), lookahead = barmerge.lookahead_off)
+    s = request.security(syminfo.tickerid, tf, ta.ema(close, lenSlow), lookahead = barmerge.lookahead_off)
+    f > s ? 1 : f < s ? -1 : 0
+
+trimLabels(arr, maxN) =>
+    while array.size(arr) > maxN
+        label.delete(array.shift(arr))
+
+trimLines(arr, maxN) =>
+    while array.size(arr) > maxN
+        line.delete(array.shift(arr))
+
+trimBoxes(arr, maxN) =>
+    while array.size(arr) > maxN
+        box.delete(array.shift(arr))
+
+trimBoxesTyped(boxes, types, maxN) =>
+    while array.size(boxes) > maxN
+        box.delete(array.shift(boxes))
+        array.shift(types)
+
+hiBetween(fromBar, toBar) =>
+    int left = math.min(fromBar, toBar)
+    int right = math.max(fromBar, toBar)
+    float mx = high[bar_index - right]
+    for i = 0 to right - left
+        mx := math.max(mx, high[bar_index - (right - i)])
+    mx
+
+loBetween(fromBar, toBar) =>
+    int left = math.min(fromBar, toBar)
+    int right = math.max(fromBar, toBar)
+    float mn = low[bar_index - right]
+    for i = 0 to right - left
+        mn := math.min(mn, low[bar_index - (right - i)])
+    mn
+
+// ── base ────────────────────────────────────────────────────────────────
+emaF = ta.ema(close, lenFast)
+emaS = ta.ema(close, lenSlow)
+atrV = ta.atr(atrLen)
+volMa = ta.sma(volume, 20)
+trendChart = emaF > emaS ? 1 : emaF < emaS ? -1 : 0
+trend4h = htfTrend(tf4h)
+ok = barstate.isconfirmed
+volOk = not needVol or volume >= 1.5 * volMa
+htfLong = not needHtf or trend4h == 1
+htfShort = not needHtf or trend4h == -1
+
+plot(emaF, "EMA20", color = #F0B90B)
+plot(emaS, "EMA50", color = #848E9C)
+bgcolor(trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
+
+var table dash = table.new(position.top_right, 2, 5, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(dash, 0, 0, "График", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 1, 0, word(trendChart), text_color = col(trendChart), text_size = size.small)
+    table.cell(dash, 0, 1, "4h", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 1, 1, word(trend4h), text_color = col(trend4h), text_size = size.small)
+    table.cell(dash, 0, 2, "Структура", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 0, 3, "Уровень", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 0, 4, "Ждём", text_color = #848E9C, text_size = size.small)
+
+// ── structure swings ────────────────────────────────────────────────────
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float sh1 = na
+var float sh2 = na
+var float sl1 = na
+var float sl2 = na
+var int sh1Bar = na
+var int sl1Bar = na
+var int structure = 0
+var line lvlHigh = na
+var line lvlLow = na
+var label lblHigh = na
+var label lblLow = na
+var array<label> eventLabels = array.new<label>()
+var array<box> obBoxes = array.new<box>()
+var array<int> obTypes = array.new<int>()
+var array<box> fvgBoxes = array.new<box>()
+var array<int> fvgTypes = array.new<int>()
+var array<label> entryLabels = array.new<label>()
+var array<line> entryLines = array.new<line>()
+
+if not na(ph)
+    sh2 := sh1
+    sh1 := ph
+    sh1Bar := bar_index - swingLen
+if not na(pl)
+    sl2 := sl1
+    sl1 := pl
+    sl1Bar := bar_index - swingLen
+
+if not na(sh1) and not na(sh2) and not na(sl1) and not na(sl2)
+    if sh1 > sh2 and sl1 > sl2
+        structure := 1
+    if sh1 < sh2 and sl1 < sl2
+        structure := -1
+
+if showLevels and barstate.islast
+    if not na(lvlHigh)
+        line.delete(lvlHigh)
+    if not na(lvlLow)
+        line.delete(lvlLow)
+    if not na(lblHigh)
+        label.delete(lblHigh)
+    if not na(lblLow)
+        label.delete(lblLow)
+    if not na(sh1)
+        lvlHigh := line.new(sh1Bar, sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
+        lblHigh := label.new(bar_index + 3, sh1, "уровень H\n" + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
+    if not na(sl1)
+        lvlLow := line.new(sl1Bar, sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
+        lblLow := label.new(bar_index + 3, sl1, "уровень L\n" + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
+
+if barstate.islast
+    table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
+    table.cell(dash, 1, 3, not na(sh1) and not na(sl1) ? str.tostring(sh1, format.mintick) + " / " + str.tostring(sl1, format.mintick) : "—", text_color = #EAECEF, text_size = size.tiny)
+
+findBullOb() =>
+    float hi = na
+    float lo = na
+    int bi = na
+    for i = 1 to 10
+        if close[i] < open[i]
+            hi := high[i]
+            lo := low[i]
+            bi := bar_index - i
+            break
+    [bi, hi, lo]
+
+findBearOb() =>
+    float hi = na
+    float lo = na
+    int bi = na
+    for i = 1 to 10
+        if close[i] > open[i]
+            hi := high[i]
+            lo := low[i]
+            bi := bar_index - i
+            break
+    [bi, hi, lo]
+
+// BOS / CHoCH
+bosUp = ok and not na(sh1) and close > sh1 and close[1] <= sh1
+bosDn = ok and not na(sl1) and close < sl1 and close[1] >= sl1
+isChoChUp = bosUp and structure < 0
+isChoChDn = bosDn and structure > 0
+isBosUp = bosUp and not isChoChUp
+isBosDn = bosDn and not isChoChDn
+
+if showBos and isBosUp
+    array.push(eventLabels, label.new(bar_index, low, "ПРОБОЙ BOS ↑\nуровень " + str.tostring(sh1, format.mintick), style = label.style_label_up, color = color.new(#0ECB81, 15), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 12)
+if showBos and isBosDn
+    array.push(eventLabels, label.new(bar_index, high, "ПРОБОЙ BOS ↓\nуровень " + str.tostring(sl1, format.mintick), style = label.style_label_down, color = color.new(#F6465D, 15), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 12)
+if showBos and isChoChUp
+    array.push(eventLabels, label.new(bar_index, low, "СМЕНА CHoCH ↑\nбыл медвежий", style = label.style_label_up, color = color.new(#F0B90B, 10), textcolor = color.black, size = size.small))
+    trimLabels(eventLabels, 12)
+if showBos and isChoChDn
+    array.push(eventLabels, label.new(bar_index, high, "СМЕНА CHoCH ↓\nбыл бычий", style = label.style_label_down, color = color.new(#F0B90B, 10), textcolor = color.black, size = size.small))
+    trimLabels(eventLabels, 12)
+
+if showOb and (isBosUp or isChoChUp)
+    [obi, obh, obl] = findBullOb()
+    if not na(obi)
+        array.push(obBoxes, box.new(obi, obh, bar_index + 20, obl, border_color = color.new(#0ECB81, 40), bgcolor = color.new(#0ECB81, 88), text = "OB лонг", text_color = #0ECB81, text_size = size.tiny))
+        array.push(obTypes, 1)
+        trimBoxesTyped(obBoxes, obTypes, obMax)
+if showOb and (isBosDn or isChoChDn)
+    [obi, obh, obl] = findBearOb()
+    if not na(obi)
+        array.push(obBoxes, box.new(obi, obh, bar_index + 20, obl, border_color = color.new(#F6465D, 40), bgcolor = color.new(#F6465D, 88), text = "OB шорт", text_color = #F6465D, text_size = size.tiny))
+        array.push(obTypes, -1)
+        trimBoxesTyped(obBoxes, obTypes, obMax)
+
+if showOb and array.size(obBoxes) > 0
+    for i = array.size(obBoxes) - 1 to 0
+        bx = array.get(obBoxes, i)
+        if close < box.get_bottom(bx) - atrV or close > box.get_top(bx) + atrV
+            box.delete(bx)
+            array.remove(obBoxes, i)
+            array.remove(obTypes, i)
+
+inBullOb = false
+inBearOb = false
+if array.size(obBoxes) > 0
+    for i = 0 to array.size(obBoxes) - 1
+        bx = array.get(obBoxes, i)
+        tp = array.get(obTypes, i)
+        if low <= box.get_top(bx) and high >= box.get_bottom(bx)
+            if tp == 1
+                inBullOb := true
+            if tp == -1
+                inBearOb := true
+
+sweepUp = ok and showSweep and not na(sh1) and high > sh1 and close < sh1 and close < open
+sweepDn = ok and showSweep and not na(sl1) and low < sl1 and close > sl1 and close > open
+if sweepUp
+    array.push(eventLabels, label.new(bar_index, high, "СНЯТИЕ ↑\nликвидность над " + str.tostring(sh1, format.mintick), style = label.style_label_down, color = color.new(#C99400, 20), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 12)
+if sweepDn
+    array.push(eventLabels, label.new(bar_index, low, "СНЯТИЕ ↓\nликвидность под " + str.tostring(sl1, format.mintick), style = label.style_label_up, color = color.new(#C99400, 20), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 12)
+
+bullGap = ok and showFvg and low > high[2] and (low - high[2]) >= fvgMinAtr * atrV
+bearGap = ok and showFvg and high < low[2] and (low[2] - high) >= fvgMinAtr * atrV
+if bullGap
+    array.push(fvgBoxes, box.new(bar_index - 2, low, bar_index + 25, high[2], border_color = color.new(#0ECB81, 55), bgcolor = color.new(#0ECB81, 90), text = "FVG ↑", text_color = #0ECB81, text_size = size.tiny))
+    array.push(fvgTypes, 1)
+    trimBoxesTyped(fvgBoxes, fvgTypes, fvgMax)
+if bearGap
+    array.push(fvgBoxes, box.new(bar_index - 2, low[2], bar_index + 25, high, border_color = color.new(#F6465D, 55), bgcolor = color.new(#F6465D, 90), text = "FVG ↓", text_color = #F6465D, text_size = size.tiny))
+    array.push(fvgTypes, -1)
+    trimBoxesTyped(fvgBoxes, fvgTypes, fvgMax)
+
+if showFvg and array.size(fvgBoxes) > 0
+    for i = array.size(fvgBoxes) - 1 to 0
+        bx = array.get(fvgBoxes, i)
+        tp = array.get(fvgTypes, i)
+        if tp == 1 and low <= box.get_bottom(bx)
+            box.delete(bx)
+            array.remove(fvgBoxes, i)
+            array.remove(fvgTypes, i)
+        else if tp == -1 and high >= box.get_top(bx)
+            box.delete(bx)
+            array.remove(fvgBoxes, i)
+            array.remove(fvgTypes, i)
+
+inBullFvg = false
+inBearFvg = false
+if array.size(fvgBoxes) > 0
+    for i = 0 to array.size(fvgBoxes) - 1
+        bx = array.get(fvgBoxes, i)
+        tp = array.get(fvgTypes, i)
+        if low <= box.get_top(bx) and high >= box.get_bottom(bx)
+            if tp == 1
+                inBullFvg := true
+            if tp == -1
+                inBearFvg := true
+
+sqHigh = ta.highest(high, sqBars)
+sqLow = ta.lowest(low, sqBars)
+inSqueeze = (sqHigh - sqLow) <= sqAtr * atrV and (sqHigh - sqLow) > 0
+sqBreakUp = ok and showSqueeze and inSqueeze[1] and close > sqHigh[1] and close[1] <= sqHigh[1]
+sqBreakDn = ok and showSqueeze and inSqueeze[1] and close < sqLow[1] and close[1] >= sqLow[1]
+var box sqBox = na
+if showSqueeze
+    if inSqueeze
+        if na(sqBox)
+            sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 25), bgcolor = color.new(#F0B90B, 92), border_style = line.style_dashed, text = "сжатие · ждём пробой", text_color = #F0B90B, text_size = size.tiny)
+        else
+            box.set_right(sqBox, bar_index)
+            box.set_top(sqBox, sqHigh)
+            box.set_bottom(sqBox, sqLow)
+    else if not na(sqBox)
+        box.set_right(sqBox, bar_index)
+        sqBox := na
+
+var float p1L = na
+var float p2L = na
+var int p1Lb = na
+var int p2Lb = na
+var float p1H = na
+var float p2H = na
+var int p1Hb = na
+var int p2Hb = na
+var float neckL = na
+var float neckH = na
+var float extL = na
+var float extH = na
+var line neckLineL = na
+var line neckLineH = na
+var label neckWaitL = na
+var label neckWaitH = na
+var int usedDblUp = na
+var int usedDblDn = na
+
+if not na(pl)
+    p1L := p2L
+    p1Lb := p2Lb
+    p2L := pl
+    p2Lb := bar_index - swingLen
+    if not na(p1L) and not na(p2L) and not na(p1Lb) and p2Lb - p1Lb >= 8 and p2Lb - p1Lb <= 60 and math.abs(p2L - p1L) <= dblTol * atrV
+        neckL := hiBetween(p1Lb, p2Lb)
+        extL := math.min(p1L, p2L)
+if not na(ph)
+    p1H := p2H
+    p1Hb := p2Hb
+    p2H := ph
+    p2Hb := bar_index - swingLen
+    if not na(p1H) and not na(p2H) and not na(p1Hb) and p2Hb - p1Hb >= 8 and p2Hb - p1Hb <= 60 and math.abs(p2H - p1H) <= dblTol * atrV
+        neckH := loBetween(p1Hb, p2Hb)
+        extH := math.max(p1H, p2H)
+
+if showDouble and barstate.islast
+    if not na(neckLineL)
+        line.delete(neckLineL)
+    if not na(neckLineH)
+        line.delete(neckLineH)
+    if not na(neckWaitL)
+        label.delete(neckWaitL)
+    if not na(neckWaitH)
+        label.delete(neckWaitH)
+    if not na(neckL) and not na(extL) and close <= neckL
+        neckLineL := line.new(p2Lb, neckL, bar_index + 2, neckL, color = #0ECB81, style = line.style_dashed)
+        neckWaitL := label.new(bar_index + 2, neckL, "фигура: двойное дно\nждём пробой шеи вверх", style = label.style_label_left, color = color.new(#0ECB81, 20), textcolor = color.white, size = size.small)
+    if not na(neckH) and not na(extH) and close >= neckH
+        neckLineH := line.new(p2Hb, neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
+        neckWaitH := label.new(bar_index + 2, neckH, "фигура: двойная вершина\nждём пробой шеи вниз", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.small)
+
+rawDblUp = showDouble and ok and not na(neckL) and close > neckL and close[1] <= neckL and not na(extL) and neckL - extL >= atrV
+rawDblDn = showDouble and ok and not na(neckH) and close < neckH and close[1] >= neckH and not na(extH) and extH - neckH >= atrV
+dblUp = rawDblUp and (na(usedDblUp) or bar_index - usedDblUp >= cooldown)
+dblDn = rawDblDn and (na(usedDblDn) or bar_index - usedDblDn >= cooldown)
+if dblUp
+    usedDblUp := bar_index
+if dblDn
+    usedDblDn := bar_index
+
+waitDblUp = showDouble and not na(neckL) and not na(extL) and close <= neckL
+waitDblDn = showDouble and not na(neckH) and not na(extH) and close >= neckH
+waiting = inSqueeze ? "пробой сжатия" : waitDblUp ? "пробой двойного дна" : waitDblDn ? "пробой двойной вершины" : inBullOb or inBearOb ? "возврат в OB" : inBullFvg or inBearFvg ? "работа с FVG" : "—"
+if barstate.islast
+    table.cell(dash, 1, 4, waiting, text_color = #F0B90B, text_size = size.tiny)
+
+// Potential entries
+longSetup = showEntries and ok and htfLong and volOk and (sqBreakUp or dblUp or isBosUp and (inBullFvg or inBullOb) or isChoChUp)
+shortSetup = showEntries and ok and htfShort and volOk and (sqBreakDn or dblDn or isBosDn and (inBearFvg or inBearOb) or isChoChDn)
+
+var int lastLong = na
+var int lastShort = na
+longFire = longSetup and (na(lastLong) or bar_index - lastLong >= cooldown)
+shortFire = shortSetup and (na(lastShort) or bar_index - lastShort >= cooldown)
+if longFire
+    lastLong := bar_index
+if shortFire
+    lastShort := bar_index
+
+figLong = dblUp ? "двойное дно" : sqBreakUp ? "пробой сжатия" : isChoChUp ? "CHoCH вверх" : isBosUp and inBullOb ? "BOS + Order Block" : isBosUp ? "BOS + FVG" : "вход"
+figShort = dblDn ? "двойная вершина" : sqBreakDn ? "пробой сжатия" : isChoChDn ? "CHoCH вниз" : isBosDn and inBearOb ? "BOS + Order Block" : isBosDn ? "BOS + FVG" : "вход"
+
+longStop = longFire ? (dblUp and not na(extL) ? extL - 0.1 * atrV : sqBreakUp ? sqLow[1] - 0.1 * atrV : math.min(low, low[1]) - 0.1 * atrV) : na
+shortStop = shortFire ? (dblDn and not na(extH) ? extH + 0.1 * atrV : sqBreakDn ? sqHigh[1] + 0.1 * atrV : math.max(high, high[1]) + 0.1 * atrV) : na
+longRisk = longFire ? close - longStop : na
+shortRisk = shortFire ? shortStop - close : na
+longTp = longFire and not na(longRisk) and longRisk > 0 ? close + rr * longRisk : na
+shortTp = shortFire and not na(shortRisk) and shortRisk > 0 ? close - rr * shortRisk : na
+
+if longFire and not na(longRisk) and longRisk > 0
+    array.push(entryLabels, label.new(bar_index, low, "ПОТЕНЦ. ЛОНГ\nфигура: " + figLong + "\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(longStop, format.mintick) + "\nцель " + str.tostring(longTp, format.mintick) + " (" + str.tostring(rr, "#.#") + "R)", style = label.style_label_up, color = color.new(#0ECB81, 5), textcolor = color.white, size = size.normal))
+    array.push(entryLines, line.new(bar_index, longStop, bar_index + 12, longStop, color = #F6465D, style = line.style_dashed, width = 2))
+    array.push(entryLines, line.new(bar_index, longTp, bar_index + 12, longTp, color = #0ECB81, style = line.style_dashed, width = 2))
+    trimLabels(entryLabels, 6)
+    trimLines(entryLines, 12)
+
+if shortFire and not na(shortRisk) and shortRisk > 0
+    array.push(entryLabels, label.new(bar_index, high, "ПОТЕНЦ. ШОРТ\nфигура: " + figShort + "\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(shortStop, format.mintick) + "\nцель " + str.tostring(shortTp, format.mintick) + " (" + str.tostring(rr, "#.#") + "R)", style = label.style_label_down, color = color.new(#F6465D, 5), textcolor = color.white, size = size.normal))
+    array.push(entryLines, line.new(bar_index, shortStop, bar_index + 12, shortStop, color = #F6465D, style = line.style_dashed, width = 2))
+    array.push(entryLines, line.new(bar_index, shortTp, bar_index + 12, shortTp, color = #0ECB81, style = line.style_dashed, width = 2))
+    trimLabels(entryLabels, 6)
+    trimLines(entryLines, 12)
+
+// ── потенциальная свеча (призрак справа) ────────────────────────────────
+var box ghostBody = na
+var line ghostWick = na
+var label ghostLbl = na
+var float lastEntryLongStop = na
+var float lastEntryLongTp = na
+var float lastEntryShortStop = na
+var float lastEntryShortTp = na
+
+if longFire and not na(longStop) and not na(longTp)
+    lastEntryLongStop := longStop
+    lastEntryLongTp := longTp
+if shortFire and not na(shortStop) and not na(shortTp)
+    lastEntryShortStop := shortStop
+    lastEntryShortTp := shortTp
+
+waitBull = inSqueeze and htfLong or waitDblUp
+waitBear = inSqueeze and htfShort or waitDblDn
+entryBull = not na(lastLong) and bar_index - lastLong <= 3 and not na(lastEntryLongTp) and not na(lastEntryLongStop)
+entryBear = not na(lastShort) and bar_index - lastShort <= 3 and not na(lastEntryShortTp) and not na(lastEntryShortStop)
+
+if barstate.islast
+    if not na(ghostBody)
+        box.delete(ghostBody)
+    if not na(ghostWick)
+        line.delete(ghostWick)
+    if not na(ghostLbl)
+        label.delete(ghostLbl)
+    ghostBody := na
+    ghostWick := na
+    ghostLbl := na
+
+    if showGhost
+        float gO = na
+        float gH = na
+        float gL = na
+        float gC = na
+        bool gBull = false
+        string gTxt = ""
+        if entryBull
+            gO := close
+            gC := close + (lastEntryLongTp - close) * 0.5
+            gH := lastEntryLongTp
+            gL := lastEntryLongStop
+            gBull := true
+            gTxt := "потенц. ↑\nк цели / стоп"
+        else if entryBear
+            gO := close
+            gC := close - (close - lastEntryShortTp) * 0.5
+            gH := lastEntryShortStop
+            gL := lastEntryShortTp
+            gBull := false
+            gTxt := "потенц. ↓\nк цели / стоп"
+        else if waitBull
+            gO := close
+            gC := close + 0.9 * atrV
+            gH := close + 1.3 * atrV
+            gL := close - 0.35 * atrV
+            gBull := true
+            gTxt := "потенц. свеча\n" + (waitDblUp ? "ждём пробой шеи ↑" : "ждём пробой сжатия ↑")
+        else if waitBear
+            gO := close
+            gC := close - 0.9 * atrV
+            gH := close + 0.35 * atrV
+            gL := close - 1.3 * atrV
+            gBull := false
+            gTxt := "потенц. свеча\n" + (waitDblDn ? "ждём пробой шеи ↓" : "ждём пробой сжатия ↓")
+
+        if not na(gO)
+            int x0 = bar_index + 1
+            int x1 = bar_index + 2
+            float bodyTop = math.max(gO, gC)
+            float bodyBot = math.min(gO, gC)
+            color fillC = gBull ? color.new(#0ECB81, 55) : color.new(#F6465D, 55)
+            color edgeC = gBull ? #0ECB81 : #F6465D
+            ghostWick := line.new(x0, gH, x0, gL, color = edgeC, width = 2)
+            ghostBody := box.new(x0, bodyTop, x1, bodyBot, border_color = edgeC, bgcolor = fillC, border_width = 2, text = "?", text_color = edgeC, text_size = size.tiny)
+            ghostLbl := label.new(x1, gBull ? gH : gL, gTxt, style = gBull ? label.style_label_up : label.style_label_down, color = color.new(edgeC, 20), textcolor = color.white, size = size.small)
+
+alertcondition(longFire, "Potential long", "65 SMC: potential long")
+alertcondition(shortFire, "Potential short", "65 SMC: potential short")
