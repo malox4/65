@@ -291,6 +291,27 @@ def _take_signals(connection: sqlite3.Connection, account: dict) -> str | None:
             "priority": 1 if item.get("ready") else 3,
         })
 
+    # План входа из SMC-карты (SK Fib / свежий BOS) — готовый сигнал на закрытой свече, не старше 2 свечей 15m
+    for symbol in list(board.get("coins") or {})[:30]:
+        if symbol in busy:
+            continue
+        coin = SCANNER.coin(symbol)
+        plan = (coin or {}).get("map", {}).get("plan") if coin else None
+        if not plan or plan.get("status") != "enter":
+            continue
+        if time.time() - plan.get("time", 0) > 2 * 15 * 60:
+            continue
+        candidates.append({
+            "symbol": symbol,
+            "side": int(plan["side"]),
+            "stop": float(plan["stop"]),
+            "target": float(plan["tp1"]),
+            "level": float(plan["entry"]),
+            "text": f"план: {plan['name']} · {plan.get('why', '')}",
+            "need_cross": False,
+            "priority": 2,
+        })
+
     # SMC ghost из кэша сканера, если день ещё «голодный» (без тяжёлого analyze на каждый цикл)
     if hungry:
         for symbol in list(board.get("coins") or {})[:20]:

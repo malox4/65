@@ -476,6 +476,35 @@ details[open].report-block > summary { margin-bottom: 6px; }
 .link-box p { margin: 6px 0 0; color: var(--muted); font-size: 11px; }
 .link-box .levels { margin-bottom: 0; }
 
+.plan-card {
+  margin: 10px 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+}
+.plan-card em {
+  display: block;
+  margin-bottom: 4px;
+  color: #a78bfa;
+  font-style: normal;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.plan-card strong { display: block; margin-bottom: 8px; font-size: 14px; }
+.plan-card.long strong { color: var(--green); }
+.plan-card.short strong { color: var(--red); }
+.plan-card.enter { border-width: 2px; box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
+.plan-card.enter.long { border-color: var(--green); background: rgba(14, 203, 129, 0.1); }
+.plan-card.enter.short { border-color: var(--red); background: rgba(246, 70, 93, 0.1); }
+.plan-card.enter em { color: var(--text); font-weight: 700; }
+.plan-card.wait { border-style: dashed; }
+.plan-card.none { border-style: dashed; opacity: 0.8; }
+.plan-card .levels { margin-bottom: 0; }
+.plan-card p { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+.plan-card .plan-fib { display: block; margin-top: 6px; color: #a78bfa; font-size: 10px; }
+
 .news-list { display: flex; flex-direction: column; gap: 8px; max-height: 520px; overflow: auto; }
 .news-item {
   display: flex;

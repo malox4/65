@@ -26,8 +26,18 @@ sqAtr       = input.float(2.5, "Ширина сжатия ATR", group = grpFig)
 showDouble  = input.bool(true, "Двойное дно/вершина", group = grpFig)
 dblTol      = input.float(0.35, "Допуск уровней ATR", group = grpFig)
 
+grpFib = "SK Fib (откат по тренду)"
+showFib     = input.bool(true, "SK Fib сетап", group = grpFib)
+fibSwing    = input.int(40, "Импульс: свечей назад", minval = 15, maxval = 150, group = grpFib)
+fibMinAtr   = input.float(3.0, "Мин импульс в ATR", minval = 1.0, step = 0.5, group = grpFib)
+fibZoneLo   = input.float(0.5, "Зона от", minval = 0.3, maxval = 0.7, step = 0.01, group = grpFib)
+fibZoneHi   = input.float(0.786, "Зона до", minval = 0.6, maxval = 0.9, step = 0.01, group = grpFib)
+fibTp1      = input.float(1.272, "TP1 ext", step = 0.01, group = grpFib)
+fibTp2      = input.float(1.618, "TP2 ext", step = 0.01, group = grpFib)
+
 grpEntry = "Entry"
 showEntries = input.bool(true, "Потенциальный вход", group = grpEntry)
+showPlan    = input.bool(true, "Карточка «План входа»", group = grpEntry)
 showGhost   = input.bool(true, "Потенциальная свеча", group = grpEntry)
 needHtf     = input.bool(true, "Только по тренду 4h", group = grpEntry)
 needVol     = input.bool(true, "Объём ≥ 1.5x", group = grpEntry)
@@ -93,7 +103,7 @@ plot(emaF, "EMA20", color = #F0B90B)
 plot(emaS, "EMA50", color = #848E9C)
 bgcolor(trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
 
-var table dash = table.new(position.top_right, 2, 5, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
 if barstate.islast
     table.cell(dash, 0, 0, "График", text_color = #848E9C, text_size = size.small)
     table.cell(dash, 1, 0, word(trendChart), text_color = col(trendChart), text_size = size.small)
@@ -102,6 +112,7 @@ if barstate.islast
     table.cell(dash, 0, 2, "Структура", text_color = #848E9C, text_size = size.small)
     table.cell(dash, 0, 3, "Уровень", text_color = #848E9C, text_size = size.small)
     table.cell(dash, 0, 4, "Ждём", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 0, 5, "SK Fib", text_color = #848E9C, text_size = size.small)
 
 // ── structure swings ────────────────────────────────────────────────────
 ph = ta.pivothigh(high, swingLen, swingLen)
@@ -406,6 +417,171 @@ if shortFire and not na(shortRisk) and shortRisk > 0
     trimLabels(entryLabels, 6)
     trimLines(entryLines, 12)
 
+// ── SK Fib: откат по тренду в премиум/дисконт зону ───────────────────────
+// Импульс = экстремумы за fibSwing свечей. Для шорта: 1 = high, 0 = low. Для лонга наоборот.
+fibHi = ta.highest(high, fibSwing)
+fibLo = ta.lowest(low, fibSwing)
+// ta.highestbars возвращает отрицательное смещение (0 = текущий бар)
+fibHiBar = bar_index + ta.highestbars(high, fibSwing)
+fibLoBar = bar_index + ta.lowestbars(low, fibSwing)
+fibRange = fibHi - fibLo
+fibBig = fibRange >= fibMinAtr * atrV
+
+// направление импульса: если low позже high → импульс вниз (шорт-сетап), иначе вверх
+fibDownImpulse = fibBig and fibLoBar > fibHiBar
+fibUpImpulse   = fibBig and fibHiBar > fibLoBar
+
+// зона отката
+fibShortZoneLo = fibLo + fibRange * fibZoneLo
+fibShortZoneHi = fibLo + fibRange * fibZoneHi
+fibLongZoneHi  = fibHi - fibRange * fibZoneLo
+fibLongZoneLo  = fibHi - fibRange * fibZoneHi
+
+inShortZone = fibDownImpulse and high >= fibShortZoneLo and low <= fibShortZoneHi and close <= fibShortZoneHi
+inLongZone  = fibUpImpulse and low <= fibLongZoneHi and high >= fibLongZoneLo and close >= fibLongZoneLo
+
+// разворотная свеча (простая): медв. engulfing / pin с верхним фитилём; быч. — зеркально
+bodyNow = math.abs(close - open)
+rangeNow = high - low
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+bearPin = rangeNow > 0 and upperWick >= 0.55 * rangeNow and close < open
+bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+bullPin = rangeNow > 0 and lowerWick >= 0.55 * rangeNow and close > open
+
+fibShortSig = showFib and ok and inShortZone and (bearEngulf or bearPin) and htfShort
+fibLongSig  = showFib and ok and inLongZone and (bullEngulf or bullPin) and htfLong
+
+// retracement extension от импульса: для шорта TP ниже low
+fibShortTp1 = fibLo - fibRange * (fibTp1 - 1.0)
+fibShortTp2 = fibLo - fibRange * (fibTp2 - 1.0)
+fibLongTp1  = fibHi + fibRange * (fibTp1 - 1.0)
+fibLongTp2  = fibHi + fibRange * (fibTp2 - 1.0)
+fibShortStop = math.max(high, fibShortZoneHi) + 0.1 * atrV
+fibLongStop  = math.min(low, fibLongZoneLo) - 0.1 * atrV
+
+var box fibZoneBox = na
+var label fibZoneLbl = na
+var array<label> fibLabels = array.new<label>()
+var array<line> fibLines = array.new<line>()
+var int lastFibLong = na
+var int lastFibShort = na
+
+fibLongFire = fibLongSig and (na(lastFibLong) or bar_index - lastFibLong >= cooldown)
+fibShortFire = fibShortSig and (na(lastFibShort) or bar_index - lastFibShort >= cooldown)
+if fibLongFire
+    lastFibLong := bar_index
+if fibShortFire
+    lastFibShort := bar_index
+
+if fibShortFire
+    r = fibShortStop - close
+    if r > 0
+        array.push(fibLabels, label.new(bar_index, high, "SK FIB ШОРТ\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(fibShortStop, format.mintick) + "\nTP1 " + str.tostring(fibShortTp1, format.mintick) + "\nTP2 " + str.tostring(fibShortTp2, format.mintick), style = label.style_label_down, color = color.new(#8B5CF6, 5), textcolor = color.white, size = size.normal))
+        array.push(fibLines, line.new(bar_index, fibShortStop, bar_index + 12, fibShortStop, color = #F6465D, style = line.style_dashed, width = 2))
+        array.push(fibLines, line.new(bar_index, fibShortTp1, bar_index + 12, fibShortTp1, color = #0ECB81, style = line.style_dashed, width = 1))
+        array.push(fibLines, line.new(bar_index, fibShortTp2, bar_index + 12, fibShortTp2, color = #0ECB81, style = line.style_dashed, width = 2))
+        trimLabels(fibLabels, 6)
+        trimLines(fibLines, 18)
+if fibLongFire
+    r = close - fibLongStop
+    if r > 0
+        array.push(fibLabels, label.new(bar_index, low, "SK FIB ЛОНГ\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(fibLongStop, format.mintick) + "\nTP1 " + str.tostring(fibLongTp1, format.mintick) + "\nTP2 " + str.tostring(fibLongTp2, format.mintick), style = label.style_label_up, color = color.new(#8B5CF6, 5), textcolor = color.white, size = size.normal))
+        array.push(fibLines, line.new(bar_index, fibLongStop, bar_index + 12, fibLongStop, color = #F6465D, style = line.style_dashed, width = 2))
+        array.push(fibLines, line.new(bar_index, fibLongTp1, bar_index + 12, fibLongTp1, color = #0ECB81, style = line.style_dashed, width = 1))
+        array.push(fibLines, line.new(bar_index, fibLongTp2, bar_index + 12, fibLongTp2, color = #0ECB81, style = line.style_dashed, width = 2))
+        trimLabels(fibLabels, 6)
+        trimLines(fibLines, 18)
+
+// зона отката на последнем баре
+fibState = "—"
+if barstate.islast
+    if not na(fibZoneBox)
+        box.delete(fibZoneBox)
+    if not na(fibZoneLbl)
+        label.delete(fibZoneLbl)
+    if showFib and fibDownImpulse
+        fibZoneBox := box.new(fibHiBar, fibShortZoneHi, bar_index + 6, fibShortZoneLo, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "SK зона шорт " + str.tostring(fibZoneLo, "#.###") + "–" + str.tostring(fibZoneHi, "#.###"), text_color = #8B5CF6, text_size = size.tiny)
+        fibState := close < fibShortZoneLo ? "ждём откат в зону ↑" : inShortZone ? "в зоне · ждём медв. свечу" : "выше зоны · откат стал разворотом?"
+    else if showFib and fibUpImpulse
+        fibZoneBox := box.new(fibLoBar, fibLongZoneHi, bar_index + 6, fibLongZoneLo, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "SK зона лонг " + str.tostring(fibZoneLo, "#.###") + "–" + str.tostring(fibZoneHi, "#.###"), text_color = #8B5CF6, text_size = size.tiny)
+        fibState := close > fibLongZoneHi ? "ждём откат в зону ↓" : inLongZone ? "в зоне · ждём быч. свечу" : "ниже зоны · откат стал разворотом?"
+    else
+        fibState := "импульса нет"
+    table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
+
+// ── карточка «План входа» (единая точка: что, где, стоп, тейк) ─────────
+var table plan = table.new(position.bottom_right, 2, 7, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+int planSide = 0
+string planName = "—"
+float planEntry = na
+float planStop = na
+float planTp = na
+float planTp2 = na
+if fibShortFire
+    planSide := -1
+    planName := "SK Fib шорт"
+    planEntry := close
+    planStop := fibShortStop
+    planTp := fibShortTp1
+    planTp2 := fibShortTp2
+else if fibLongFire
+    planSide := 1
+    planName := "SK Fib лонг"
+    planEntry := close
+    planStop := fibLongStop
+    planTp := fibLongTp1
+    planTp2 := fibLongTp2
+else if longFire and not na(longRisk) and longRisk > 0
+    planSide := 1
+    planName := figLong
+    planEntry := close
+    planStop := longStop
+    planTp := longTp
+else if shortFire and not na(shortRisk) and shortRisk > 0
+    planSide := -1
+    planName := figShort
+    planEntry := close
+    planStop := shortStop
+    planTp := shortTp
+
+var int planSideKeep = 0
+var string planNameKeep = "—"
+var float planEntryKeep = na
+var float planStopKeep = na
+var float planTpKeep = na
+var float planTp2Keep = na
+var int planBarKeep = na
+if planSide != 0
+    planSideKeep := planSide
+    planNameKeep := planName
+    planEntryKeep := planEntry
+    planStopKeep := planStop
+    planTpKeep := planTp
+    planTp2Keep := planTp2
+    planBarKeep := bar_index
+
+if barstate.islast and showPlan
+    fresh = not na(planBarKeep) and bar_index - planBarKeep <= 8
+    headC = fresh ? (planSideKeep > 0 ? #0ECB81 : #F6465D) : #848E9C
+    table.cell(plan, 0, 0, fresh ? (planSideKeep > 0 ? "ПЛАН: ЛОНГ" : "ПЛАН: ШОРТ") : "ПЛАН ВХОДА", text_color = headC, text_size = size.small)
+    table.cell(plan, 1, 0, fresh ? planNameKeep : "сигнала нет", text_color = headC, text_size = size.small)
+    table.cell(plan, 0, 1, "Вход", text_color = #848E9C, text_size = size.small)
+    table.cell(plan, 1, 1, fresh ? str.tostring(planEntryKeep, format.mintick) : "—", text_color = #EAECEF, text_size = size.small)
+    table.cell(plan, 0, 2, "Стоп", text_color = #848E9C, text_size = size.small)
+    table.cell(plan, 1, 2, fresh ? str.tostring(planStopKeep, format.mintick) : "—", text_color = #F6465D, text_size = size.small)
+    table.cell(plan, 0, 3, "Тейк 1", text_color = #848E9C, text_size = size.small)
+    table.cell(plan, 1, 3, fresh ? str.tostring(planTpKeep, format.mintick) : "—", text_color = #0ECB81, text_size = size.small)
+    table.cell(plan, 0, 4, "Тейк 2", text_color = #848E9C, text_size = size.small)
+    table.cell(plan, 1, 4, fresh and not na(planTp2Keep) ? str.tostring(planTp2Keep, format.mintick) : "—", text_color = #0ECB81, text_size = size.small)
+    riskAbs = fresh ? math.abs(planEntryKeep - planStopKeep) : na
+    rrVal = fresh and not na(riskAbs) and riskAbs > 0 ? math.abs(planTpKeep - planEntryKeep) / riskAbs : na
+    table.cell(plan, 0, 5, "R:R / стоп %", text_color = #848E9C, text_size = size.small)
+    table.cell(plan, 1, 5, fresh and not na(rrVal) ? str.tostring(rrVal, "#.#") + "R · " + str.tostring(riskAbs / planEntryKeep * 100, "#.##") + "%" : "—", text_color = #EAECEF, text_size = size.small)
+    table.cell(plan, 0, 6, "Свечей назад", text_color = #848E9C, text_size = size.small)
+    table.cell(plan, 1, 6, fresh ? str.tostring(bar_index - planBarKeep) : "ждём: " + waiting, text_color = #F0B90B, text_size = size.tiny)
+
 // ── потенциальная свеча (призрак справа) ────────────────────────────────
 var box ghostBody = na
 var line ghostWick = na
@@ -487,3 +663,6 @@ if barstate.islast
 
 alertcondition(longFire, "Potential long", "65 SMC: potential long")
 alertcondition(shortFire, "Potential short", "65 SMC: potential short")
+alertcondition(fibLongFire, "SK Fib long", "65 SK Fib: long setup")
+alertcondition(fibShortFire, "SK Fib short", "65 SK Fib: short setup")
+alertcondition(longFire or shortFire or fibLongFire or fibShortFire, "Any plan", "65: план входа готов")

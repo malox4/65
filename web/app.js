@@ -448,6 +448,17 @@ function positionOverlays() {
   const dbl = map.pending || {};
   if (dbl.doubleUp) drawNeck(svg, dbl.doubleUp.neck, "#0ECB81", "шея · двойное дно");
   if (dbl.doubleDn) drawNeck(svg, dbl.doubleDn.neck, "#F6465D", "шея · двойная вершина");
+  if (map.fib) {
+    const fib = map.fib;
+    const since = fib.side < 0 ? fib.highTime : fib.lowTime;
+    drawSvgBox(svg, since, fib.zoneHi, fib.zoneLo, {
+      fill: fib.signal ? "rgba(139, 92, 246, 0.22)" : fib.inZone ? "rgba(139, 92, 246, 0.14)" : "rgba(139, 92, 246, 0.07)",
+      stroke: "#8B5CF6",
+      dash: fib.signal ? "" : "4 3",
+      label: `SK Fib ${fib.side < 0 ? "шорт" : "лонг"} 0.5–0.786 · ${fib.state}`,
+      labelColor: "#A78BFA",
+    });
+  }
   if (map.ghost) drawGhostCandle(svg, map.ghost);
 }
 
@@ -925,8 +936,46 @@ function setGuides(strong, watch, map) {
   }
   if (map?.levels?.high) add(map.levels.high.price, "rgba(246, 70, 93, 0.55)", "уровень H", LightweightCharts.LineStyle.Dotted);
   if (map?.levels?.low) add(map.levels.low.price, "rgba(14, 203, 129, 0.55)", "уровень L", LightweightCharts.LineStyle.Dotted);
+  const plan = map?.plan;
+  if (plan && plan.status !== "none" && plan.entry != null) {
+    const enter = plan.status === "enter";
+    const style = enter ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed;
+    add(plan.entry, "#A78BFA", `${enter ? "ВХОД" : "план вход"} ${plan.sideWord}`, style);
+    add(plan.stop, enter ? "#F6465D" : "rgba(246, 70, 93, 0.6)", "план стоп", style);
+    add(plan.tp1, enter ? "#0ECB81" : "rgba(14, 203, 129, 0.6)", "план тейк 1", style);
+    if (plan.tp2 != null) add(plan.tp2, "rgba(14, 203, 129, 0.45)", "тейк 2", LightweightCharts.LineStyle.Dotted);
+    return;
+  }
   if (map?.ghost?.stop != null) add(map.ghost.stop, "rgba(246, 70, 93, 0.35)", "потенц. стоп", LightweightCharts.LineStyle.Dotted);
   if (map?.ghost?.target != null) add(map.ghost.target, "rgba(14, 203, 129, 0.35)", "потенц. цель", LightweightCharts.LineStyle.Dotted);
+}
+
+function planBlock(map) {
+  const plan = map?.plan;
+  if (!plan) return "";
+  if (plan.status === "none") {
+    return `<div class="plan-card none"><em>План входа</em><p class="alert-text">${escapeHtml(plan.why || "сценария нет")}</p></div>`;
+  }
+  const enter = plan.status === "enter";
+  const tone = plan.side > 0 ? "long" : "short";
+  const rr = plan.rr == null ? "—" : `${plan.rr.toFixed(1)} к 1`;
+  const pct = plan.stopPct == null ? "" : `${plan.stopPct}% цены`;
+  const fib = map.fib;
+  const fibLine = fib && plan.name.startsWith("SK Fib")
+    ? `<small class="plan-fib">0.5 ${formatPrice(fib.levels["0.5"])} · 0.618 ${formatPrice(fib.levels["0.618"])} · 0.786 ${formatPrice(fib.levels["0.786"])}</small>`
+    : "";
+  return `<div class="plan-card ${tone} ${enter ? "enter" : "wait"}">`
+    + `<em>${enter ? "ВХОДИТЬ СЕЙЧАС" : "План входа · ждём триггер"}</em>`
+    + `<strong>${plan.sideWord} · ${escapeHtml(plan.name)}</strong>`
+    + `<div class="levels">`
+    + `<div><span>${enter ? "Вход" : "Вход при"}</span><b>${formatPrice(plan.entry)}</b></div>`
+    + `<div><span>Стоп</span><b class="down">${formatPrice(plan.stop)}</b><small>${pct}</small></div>`
+    + `<div><span>Тейк 1</span><b class="up">${formatPrice(plan.tp1)}</b><small>${rr}</small></div>`
+    + `<div><span>Тейк 2</span><b class="up">${plan.tp2 == null ? "—" : formatPrice(plan.tp2)}</b></div>`
+    + `</div>`
+    + `<p class="alert-text">${escapeHtml(plan.why || "")}</p>`
+    + fibLine
+    + `</div>`;
 }
 
 function sideName(side) {
@@ -1046,6 +1095,7 @@ function renderAlert(coin, strong, watch, map) {
     node.className = `alert ${tone}`;
     node.innerHTML = head(`${sideName(strong.side)} · ${strong.letter}. ${strong.name}`, "Сильный сигнал")
       + levelRows(strong, status)
+      + planBlock(map)
       + contextRows(coin, strong.side)
       + linkBlock(coin)
       + mapBlock()
@@ -1058,6 +1108,7 @@ function renderAlert(coin, strong, watch, map) {
     node.innerHTML = head(`${sideName(watch.side)} · ${watch.letter}. ${watch.name}`, "Может стать сильным")
       + `<p class="alert-text">Нужно: ${escapeHtml(watch.condition)}.<br>${escapeHtml(missing)}</p>`
       + levelRows(watch, "жду условие")
+      + planBlock(map)
       + contextRows(coin, watch.side)
       + linkBlock(coin)
       + mapBlock()
@@ -1069,11 +1120,13 @@ function renderAlert(coin, strong, watch, map) {
   const lastLine = last
     ? `<p class="alert-text">Последний сильный: ${last.letter}, ${sideName(last.side).toLowerCase()}, ${clock(last.entryTime)} → <b class="${last.outcome.r > 0 ? "up" : "down"}">${outcome[last.outcome.status] || "в работе"}</b></p>`
     : `<p class="alert-text">За двое суток сильных сигналов не было</p>`;
-  node.className = map?.ghost ? "alert watch" : "alert quiet";
+  const plan = map?.plan;
+  const planEnter = plan?.status === "enter";
+  node.className = planEnter ? `alert ${plan.side > 0 ? "long" : "short"}` : (map?.ghost || plan?.status === "wait") ? "alert watch" : "alert quiet";
   node.innerHTML = head(
-    map?.waiting && map.waiting !== "—" ? `Ждём: ${map.waiting}` : "Сильного сигнала нет",
-    `SMC + стратегия · ${prettySymbol(coin.symbol)}`,
-  ) + contextRows(coin) + linkBlock(coin) + mapBlock() + lastLine;
+    planEnter ? `${plan.sideWord} · ${plan.name}` : map?.waiting && map.waiting !== "—" ? `Ждём: ${map.waiting}` : "Сильного сигнала нет",
+    planEnter ? `Сигнал на закрытой свече · ${prettySymbol(coin.symbol)}` : `SMC + стратегия · ${prettySymbol(coin.symbol)}`,
+  ) + planBlock(map) + contextRows(coin) + linkBlock(coin) + mapBlock() + lastLine;
 }
 
 function startLive() {
