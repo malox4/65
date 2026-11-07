@@ -10,7 +10,7 @@ tp1R       = input.float(1.0, "ТЕЙК1 = риск ×", minval = 0.5, step = 0.
 tp2R       = input.float(2.0, "ТЕЙК2 = риск ×", minval = 0.5, step = 0.25, group = grp)
 tp3R       = input.float(3.0, "ТЕЙК3 = риск ×", minval = 0.5, step = 0.25, group = grp)
 slPad      = input.float(0.12, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
-freshBars  = input.int(6, "Держать сигнал N свечей", minval = 2, maxval = 20, group = grp)
+tradeHorizon = input.int(80, "Держать позицию макс. свечей", minval = 10, maxval = 300, group = grp, tooltip = "План висит, пока не стоп / не ТЕЙК3 (или не истечёт горизонт). Не пишет ОПОЗДАЛ, если ты уже в сделке.")
 cooldown   = input.int(8, "Пауза между сигналами", minval = 3, maxval = 40, group = grp)
 liveAtr    = input.float(0.7, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
 needHtf    = input.bool(true, "Фильтр EMA тренда", group = grp)
@@ -50,7 +50,6 @@ colGo = #0ECB81
 colStop = #F6465D
 colTp = #3B82F6
 colWait = #2B3139
-colLate = #F6465D
 colNow = #F0B90B
 colWhy = #F0B90B
 colMiss = #848E9C
@@ -728,7 +727,21 @@ rawLong = vLong >= minVotes and vLong > vShort and htfLong and not na(stopL) and
 rawShort = vShort >= minVotes and vShort > vLong and htfShort and not na(stopS) and close < stopS
 
 var int lastFire = na
-canFire = na(lastFire) or (bar_index - lastFire) >= cooldown
+var int tradeOut = 0  // 0 open, 1 tp3, -1 stop, 2 expire
+var string tradeResMem = ""
+var int closeShowUntil = na
+var float eMem = na
+var float sMem = na
+var float t1Mem = na
+var float t2Mem = na
+var float t3Mem = na
+var int sideMem = 0
+var string whyMem = ""
+var int votesMem = 0
+var int bornMem = na
+
+openTrade = not na(eMem) and not na(bornMem) and sideMem != 0 and tradeOut == 0
+canFire = (na(lastFire) or (bar_index - lastFire) >= cooldown) and not openTrade
 
 float entry = na
 float stop = na
@@ -861,16 +874,6 @@ if barstate.isconfirmed and canFire and rawShort and side == 0
         lastFire := bar_index
         snapWhy(-1)
 
-var float eMem = na
-var float sMem = na
-var float t1Mem = na
-var float t2Mem = na
-var float t3Mem = na
-var int sideMem = 0
-var string whyMem = ""
-var int votesMem = 0
-var int bornMem = na
-
 if side != 0
     eMem := entry
     sMem := stop
@@ -881,9 +884,13 @@ if side != 0
     whyMem := why
     votesMem := votes
     bornMem := bar_index
+    tradeOut := 0
+    tradeResMem := ""
+    closeShowUntil := na
 
-haveSig = not na(eMem) and not na(bornMem) and (bar_index - bornMem) <= freshBars
-if haveSig
+// позиция живёт до стопа / ТЕЙК3 / горизонта — без «ОПОЗДАЛ» пока сделка идёт
+stillOpen = not na(eMem) and not na(bornMem) and sideMem != 0 and tradeOut == 0
+if stillOpen
     entry := eMem
     stop := sMem
     take1 := t1Mem
@@ -892,7 +899,30 @@ if haveSig
     side := sideMem
     why := whyMem
     votes := votesMem
-else
+    // исход по свечам после входа
+    if bar_index > bornMem
+        if side == 1
+            if low <= stop
+                tradeOut := -1
+                tradeResMem := "ЗАКРЫТО · СТОП"
+            else if high >= take3
+                tradeOut := 1
+                tradeResMem := "ЗАКРЫТО · ТЕЙК3"
+        else
+            if high >= stop
+                tradeOut := -1
+                tradeResMem := "ЗАКРЫТО · СТОП"
+            else if low <= take3
+                tradeOut := 1
+                tradeResMem := "ЗАКРЫТО · ТЕЙК3"
+        if tradeOut == 0 and (bar_index - bornMem) >= tradeHorizon
+            tradeOut := 2
+            tradeResMem := "ЗАКРЫТО · время вышло"
+
+haveSig = stillOpen and tradeOut == 0
+justClosed = tradeOut != 0 and not na(bornMem)
+
+if not haveSig and not justClosed
     eMem := na
     sMem := na
     t1Mem := na
@@ -910,14 +940,53 @@ else
     side := 0
     why := ""
     votes := 0
+    tradeOut := 0
+    tradeResMem := ""
+    if array.size(whyTopA) > 0
+        clearWhy()
+
+// после закрытия несколько свечей показываем итог, потом чистим
+if justClosed and na(closeShowUntil)
+    closeShowUntil := bar_index + 3
+if not na(closeShowUntil) and bar_index <= closeShowUntil
+    entry := eMem
+    stop := sMem
+    take1 := t1Mem
+    take2 := t2Mem
+    take3 := t3Mem
+    side := sideMem
+    why := whyMem
+    votes := votesMem
+if not na(closeShowUntil) and bar_index > closeShowUntil
+    eMem := na
+    sMem := na
+    t1Mem := na
+    t2Mem := na
+    t3Mem := na
+    sideMem := 0
+    whyMem := ""
+    votesMem := 0
+    bornMem := na
+    tradeOut := 0
+    tradeResMem := ""
+    closeShowUntil := na
+    entry := na
+    stop := na
+    take1 := na
+    take2 := na
+    take3 := na
+    side := 0
+    why := ""
+    votes := 0
     if array.size(whyTopA) > 0
         clearWhy()
 
 float take = take2  // основной тейк для истории / алертов = TP2
 
 nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
-late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
-status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+// пока сделка открыта — ACTIVE (план висит); ОПОЗДАЛ больше не показываем
+showingDone = justClosed and not na(closeShowUntil) and bar_index <= closeShowUntil
+status = showingDone ? "DONE" : not haveSig ? "WAIT" : (nearEntry and bar_index == bornMem) ? "NOW" : haveSig ? "ACTIVE" : "WAIT"
 
 // ── история только конфлюенс-сигналов ──────────────────────────────────
 var array<int> exBi = array.new_int()
@@ -1033,10 +1102,11 @@ if barstate.islast
     if status == "WAIT"
         bgVotes = "фон: L" + str.tostring(vLong) + " / S" + str.tostring(vShort) + " (нужно ≥" + str.tostring(minVotes) + ")"
         lbMain := label.new(x2, close, "ЖДИ\nсигнала нет\n\n" + bgVotes, style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
-    else if status == "LATE"
-        lbMain := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 0), textcolor = color.white, size = size.large)
+    else if status == "DONE"
+        colDone = tradeOut == 1 ? colGo : tradeOut == -1 ? colStop : colMiss
+        lbMain := label.new(x2, close, tradeResMem + "\nплан снят", style = label.style_label_left, color = color.new(colDone, 0), textcolor = color.white, size = size.large)
     else
-        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди цену") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди цену")
+        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "В СДЕЛКЕ · ЛОНГ") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "В СДЕЛКЕ · ШОРТ")
         col = side == 1 ? colGo : colStop
         risk = math.abs(entry - stop)
         pct1 = pxPct(entry, take1)
@@ -1114,8 +1184,8 @@ if barstate.islast
 
 var table t = table.new(position.top_right, 1, 5, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "LATE" ? "ОПОЗДАЛ" : status == "WAIT_FILL" ? "жди цену" : "ЖДИ"
-    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
+    big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "ACTIVE" ? (side == 1 ? "В СДЕЛКЕ · ЛОНГ" : "В СДЕЛКЕ · ШОРТ") : status == "DONE" ? tradeResMem : "ЖДИ"
+    table.cell(t, 0, 0, big, text_color = status == "NOW" or status == "ACTIVE" ? (side == 1 ? colGo : colStop) : status == "DONE" ? (tradeOut == 1 ? colGo : tradeOut == -1 ? colStop : colMiss) : colNow, text_size = size.large)
     table.cell(t, 0, 1, haveSig ? ("вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick)) : ("микс · нужно ≥" + str.tostring(minVotes) + " · L" + str.tostring(vLong) + "/S" + str.tostring(vShort)), text_color = color.white, text_size = size.small)
     table.cell(t, 0, 2, haveSig ? ("ТЕЙК1 +" + str.tostring(pxPct(entry, take1), "#.##") + "% · ждать " + fmtWait(etaMinutes(entry, take1))) : "—", text_color = colGo, text_size = size.small)
     table.cell(t, 0, 3, haveSig ? ("ТЕЙК2 +" + str.tostring(pxPct(entry, take2), "#.##") + "% · ждать " + fmtWait(etaMinutes(entry, take2))) : "—", text_color = colTp, text_size = size.small)
