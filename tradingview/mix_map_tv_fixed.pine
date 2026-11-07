@@ -961,19 +961,15 @@ if useZ146
                 zLvl := zL
                 zLvlSide := zDir
                 zLvlBar := bar_index
-                if not modeScalp
-                    if not na(zLvlLn)
-                        line.delete(zLvlLn)
-                    zLvlLn := line.new(bar_index, zL, bar_index + 20, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 2)
+                if not na(zLvlLn)
+                    line.delete(zLvlLn)
+                zLvlLn := line.new(bar_index, zL, bar_index + 20, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 2)
         zLastP := zExt
         zLastPi := zExtI
         zDir := -zDir
         zExt := zDir > 0 ? high : low
         zExtI := bar_index
-    if modeScalp and not na(zLvlLn)
-        line.delete(zLvlLn)
-        zLvlLn := na
-    else if not na(zLvlLn)
+    if not na(zLvlLn)
         line.set_x2(zLvlLn, bar_index + 2)
 
 z146Long = useZ146 and ok and not na(zLvl) and zLvlSide > 0 and low <= zLvl and close > zLvl and close > open and (not needHtf or htfLong) and (not needVol or volOk)
