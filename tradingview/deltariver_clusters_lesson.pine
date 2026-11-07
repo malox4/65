@@ -44,8 +44,8 @@ ltfV = request.security_lower_tf(syminfo.tickerid, ltf, volume)
 
 f_split(o, h, l, c, v) =>
     rng = h - l
-    buy = na
-    sell = na
+    float buy = 0.0
+    float sell = 0.0
     if na(v) or v <= 0
         buy := 0.0
         sell := 0.0
