@@ -250,8 +250,8 @@ if barstate.islast
         lnS := line.new(bar_index - 2, stop, x2, stop, color = colStop, width = 2)
         lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 2)
         lbE := label.new(x2, entry, "ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
-        lbS := label.new(x2, stop, "СТОП", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
-        lbT := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
     else
         sideTxt = side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС"
         lb := label.new(x2, entry, sideTxt + "\n" + mode + " зоны " + which + "\nсессия " + sessName, style = label.style_label_left, color = color.new(colGo, 0), textcolor = color.white, size = size.large)
