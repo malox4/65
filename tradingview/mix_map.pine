@@ -3,7 +3,9 @@
 // Если на графике НЕТ жёлтой метки «65 v3 SCALP» слева внизу — это СТАРАЯ версия, перевставь скрипт.
 // Scalp (по умолчанию): без BOS/CHoCH/sweep/Fib/OB/FVG/уровней на графике — только 1 активная сделка + карточки.
 // Невидимые box/line тоже ломают зум в TV (тянут шкалу цены) — в Scalp зоны считаем во float, без drawing.
-indicator("65 Map Algo v3 · Scalp", overlay = true, max_boxes_count = 60, max_lines_count = 80, max_labels_count = 80)
+// Crash-fix: НЕ ставить label.new в тернарник ?: (Pine считает обе ветки → утечка → max_labels).
+// array.get в ?: тоже падает, когда actIdx=na — только через if.
+indicator("65 Map Algo v3 · Scalp", overlay = true, max_boxes_count = 100, max_lines_count = 100, max_labels_count = 150)
 
 // ── inputs ──────────────────────────────────────────────────────────────
 grpTrend = "Trend"
@@ -1330,21 +1332,37 @@ if algoStyle and planEnter
     float p3 = planTp3Keep
 
     while array.size(tOpen) >= maxHist
-        label.delete(array.shift(histLbl))
-        array.shift(tSide)
-        array.shift(tEntry)
-        array.shift(tStop)
-        array.shift(tTp1)
-        array.shift(tTp2)
-        array.shift(tTp3)
-        array.shift(tBar)
-        array.shift(tOpen)
-        array.shift(tName)
-        array.shift(tHitTp)
+        if array.size(histLbl) > 0
+            label.delete(array.shift(histLbl))
+        if array.size(tSide) > 0
+            array.shift(tSide)
+        if array.size(tEntry) > 0
+            array.shift(tEntry)
+        if array.size(tStop) > 0
+            array.shift(tStop)
+        if array.size(tTp1) > 0
+            array.shift(tTp1)
+        if array.size(tTp2) > 0
+            array.shift(tTp2)
+        if array.size(tTp3) > 0
+            array.shift(tTp3)
+        if array.size(tBar) > 0
+            array.shift(tBar)
+        if array.size(tOpen) > 0
+            array.shift(tOpen)
+        if array.size(tName) > 0
+            array.shift(tName)
+        if array.size(tHitTp) > 0
+            array.shift(tHitTp)
         if not na(actIdx)
-            actIdx := actIdx - 1
+            actIdx := math.max(actIdx - 1, 0)
 
-    label hL = planSide > 0 ? label.new(bar_index, low, "▲", style = label.style_label_up, color = #00E676, textcolor = color.black, size = size.tiny) : label.new(bar_index, high, "▼", style = label.style_label_down, color = #FF1744, textcolor = color.white, size = size.tiny)
+    // ВАЖНО: ?: в Pine всегда считает ОБЕ ветки — label.new в тернарнике утекает и валит скрипт (max_labels)
+    label hL = na
+    if planSide > 0
+        hL := label.new(bar_index, low, "▲", style = label.style_label_up, color = #00E676, textcolor = color.black, size = size.tiny)
+    else
+        hL := label.new(bar_index, high, "▼", style = label.style_label_down, color = #FF1744, textcolor = color.white, size = size.tiny)
     array.push(histLbl, hL)
     array.push(tSide, planSide)
     array.push(tEntry, planEntry)
@@ -1363,16 +1381,13 @@ if algoStyle and planEnter
     lastTradeRes := "open"
 
     int xR = bar_index + useHorizon
-    // Scalp: компактные метки; вне Scalp — тоже tiny, чтобы зум не ломался
-    string buyTxt = modeScalp ? "BUY" : "BUY"
-    string sellTxt = modeScalp ? "SELL" : "SELL"
-    actBuySell := planSide > 0 ? label.new(bar_index, low, buyTxt, style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.normal) : label.new(bar_index, high, sellTxt, style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.normal)
     if planSide > 0
+        actBuySell := label.new(bar_index, low, "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.normal)
         actSl := box.new(bar_index, planEntry, xR, planStop, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
-        // Scalp: зона только до TP2 (не тянуть шкалу до TP3)
         float tpZoneHi = modeScalp and closeAtTp2 ? p2 : p3
         actTpZone := box.new(bar_index, tpZoneHi, xR, planEntry, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
     else
+        actBuySell := label.new(bar_index, high, "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.normal)
         actSl := box.new(bar_index, planStop, xR, planEntry, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
         float tpZoneLo = modeScalp and closeAtTp2 ? p2 : p3
         actTpZone := box.new(bar_index, planEntry, xR, tpZoneLo, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
@@ -1428,8 +1443,9 @@ if algoStyle and array.size(tOpen) > 0
                         else
                             algoTp += 1
                         lastTradeName := array.get(tName, i)
-                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▲ TP" + str.tostring(hitTp) : "▲ SL")
-                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #FF1744)
+                        if i < array.size(histLbl)
+                            label.set_text(array.get(histLbl, i), hitTp > 0 ? "▲ TP" + str.tostring(hitTp) : "▲ SL")
+                            label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #FF1744)
                         if not na(actIdx) and i == actIdx and not na(actBuySell)
                             label.set_text(actBuySell, hitTp > 0 ? "BUY · TP" + str.tostring(hitTp) : "BUY · SL")
                             label.set_color(actBuySell, hitTp > 0 ? #00E676 : #FF1744)
@@ -1441,8 +1457,9 @@ if algoStyle and array.size(tOpen) > 0
                         else
                             algoTime += 1
                         lastTradeName := array.get(tName, i)
-                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▲ TP" + str.tostring(hitTp) : "▲ ·")
-                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #848E9C)
+                        if i < array.size(histLbl)
+                            label.set_text(array.get(histLbl, i), hitTp > 0 ? "▲ TP" + str.tostring(hitTp) : "▲ ·")
+                            label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #848E9C)
                         if not na(actIdx) and i == actIdx and not na(actBuySell)
                             label.set_text(actBuySell, hitTp > 0 ? "BUY · TP" + str.tostring(hitTp) : "BUY · time")
                 else
@@ -1473,8 +1490,9 @@ if algoStyle and array.size(tOpen) > 0
                         else
                             algoTp += 1
                         lastTradeName := array.get(tName, i)
-                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▼ TP" + str.tostring(hitTp) : "▼ SL")
-                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #FF1744)
+                        if i < array.size(histLbl)
+                            label.set_text(array.get(histLbl, i), hitTp > 0 ? "▼ TP" + str.tostring(hitTp) : "▼ SL")
+                            label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #FF1744)
                         if not na(actIdx) and i == actIdx and not na(actBuySell)
                             label.set_text(actBuySell, hitTp > 0 ? "SELL · TP" + str.tostring(hitTp) : "SELL · SL")
                             label.set_color(actBuySell, hitTp > 0 ? #00E676 : #FF1744)
@@ -1486,13 +1504,14 @@ if algoStyle and array.size(tOpen) > 0
                         else
                             algoTime += 1
                         lastTradeName := array.get(tName, i)
-                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▼ TP" + str.tostring(hitTp) : "▼ ·")
-                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #848E9C)
+                        if i < array.size(histLbl)
+                            label.set_text(array.get(histLbl, i), hitTp > 0 ? "▼ TP" + str.tostring(hitTp) : "▼ ·")
+                            label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #848E9C)
                         if not na(actIdx) and i == actIdx and not na(actBuySell)
                             label.set_text(actBuySell, hitTp > 0 ? "SELL · TP" + str.tostring(hitTp) : "SELL · time")
 
     // тянем только АКТИВНУЮ коробку
-    if not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
+    if not na(actIdx) and actIdx >= 0 and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
         algoBusy := true
         int xr = bar_index + 3
         if not na(actSl)
@@ -1515,7 +1534,7 @@ if algoStyle and array.size(tOpen) > 0
             label.set_x(actTp3L, xr)
         if not na(actSlL)
             label.set_x(actSlL, xr)
-    else if not na(actIdx) and actIdx < array.size(tOpen) and not array.get(tOpen, actIdx)
+    else if not na(actIdx) and actIdx >= 0 and actIdx < array.size(tOpen) and not array.get(tOpen, actIdx)
         algoBusy := false
         // скальп: сразу убрать коробки после TP/SL — не оставлять BUY·SL на экране
         if modeScalp
@@ -1561,19 +1580,36 @@ if algoStyle and array.size(tOpen) > 0
         algoBusy := false
 
 if algoStyle and barstate.islast
-    bool openNow = not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
-    winRate = algoTrades > 0 ? algoTp / algoTrades * 100 : 0.0
-    stopRate = algoTrades > 0 ? algoSl / algoTrades * 100 : 0.0
+    // не читать массивы через ?: — Pine считает обе ветки и падает на array.get(..., na)
+    bool openNow = not na(actIdx) and actIdx >= 0 and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
+    string dashSide = "READY"
+    color dashSideCol = #EAECEF
+    string dashSetup = "—"
+    string dashEntry = "—"
+    string dashSl = "—"
+    string dashTp = "—"
+    if openNow
+        int sideNow = array.get(tSide, actIdx)
+        dashSide := sideNow > 0 ? "LONG" : "SHORT"
+        dashSideCol := sideNow > 0 ? #00E676 : #FF1744
+        dashSetup := array.get(tName, actIdx)
+        dashEntry := str.tostring(array.get(tEntry, actIdx), format.mintick)
+        dashSl := str.tostring(array.get(tStop, actIdx), format.mintick)
+        dashTp := str.tostring(array.get(tTp1, actIdx), format.mintick) + " / " + str.tostring(array.get(tTp2, actIdx), format.mintick) + " / " + str.tostring(array.get(tTp3, actIdx), format.mintick)
+    else if not na(planBarKeep) and bar_index - planBarKeep <= signalBars
+        dashSetup := planNameKeep
+    winRate = algoTrades > 0 ? algoTp / algoTrades * 100.0 : 0.0
+    stopRate = algoTrades > 0 ? algoSl / algoTrades * 100.0 : 0.0
     table.cell(algoDash, 0, 0, "65 " + SCRIPT_VER, text_color = #F0B90B, text_size = size.normal)
-    table.cell(algoDash, 1, 0, openNow ? (array.get(tSide, actIdx) > 0 ? "LONG" : "SHORT") : "READY", text_color = openNow ? (array.get(tSide, actIdx) > 0 ? #00E676 : #FF1744) : #EAECEF, text_size = size.large)
+    table.cell(algoDash, 1, 0, dashSide, text_color = dashSideCol, text_size = size.large)
     table.cell(algoDash, 0, 1, "Setup", text_color = #848E9C, text_size = size.small)
-    table.cell(algoDash, 1, 1, openNow ? array.get(tName, actIdx) : (not na(planBarKeep) and bar_index - planBarKeep <= signalBars ? planNameKeep : "—"), text_color = #EAECEF, text_size = size.small)
+    table.cell(algoDash, 1, 1, dashSetup, text_color = #EAECEF, text_size = size.small)
     table.cell(algoDash, 0, 2, "Entry", text_color = #848E9C, text_size = size.small)
-    table.cell(algoDash, 1, 2, openNow ? str.tostring(array.get(tEntry, actIdx), format.mintick) : "—", text_color = color.white, text_size = size.normal)
+    table.cell(algoDash, 1, 2, dashEntry, text_color = color.white, text_size = size.normal)
     table.cell(algoDash, 0, 3, "SL", text_color = #848E9C, text_size = size.small)
-    table.cell(algoDash, 1, 3, openNow ? str.tostring(array.get(tStop, actIdx), format.mintick) : "—", text_color = #FF1744, text_size = size.normal)
+    table.cell(algoDash, 1, 3, dashSl, text_color = #FF1744, text_size = size.normal)
     table.cell(algoDash, 0, 4, "TP1 / TP2 / TP3", text_color = #848E9C, text_size = size.small)
-    table.cell(algoDash, 1, 4, openNow ? str.tostring(array.get(tTp1, actIdx), format.mintick) + " / " + str.tostring(array.get(tTp2, actIdx), format.mintick) + " / " + str.tostring(array.get(tTp3, actIdx), format.mintick) : "—", text_color = #00E676, text_size = size.tiny)
+    table.cell(algoDash, 1, 4, dashTp, text_color = #00E676, text_size = size.tiny)
     table.cell(algoDash, 0, 5, "Trades", text_color = #848E9C, text_size = size.small)
     table.cell(algoDash, 1, 5, str.tostring(algoTrades) + " · TP " + str.tostring(algoTp) + " · SL " + str.tostring(algoSl), text_color = #EAECEF, text_size = size.small)
     table.cell(algoDash, 0, 6, "TP% / SL%", text_color = #848E9C, text_size = size.small)
@@ -1584,16 +1620,26 @@ if algoStyle and barstate.islast
 if barstate.islast and showPlan
     fresh = not na(planBarKeep) and bar_index - planBarKeep <= (modeScalp ? math.max(signalBars, 8) : signalBars)
     waitWhy = modeScalp ? waiting : (showFib and (skDown or skUp) ? fibState : waiting)
-    bool inTradeNow = algoStyle and algoBusy and not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
+    bool inTradeNow = algoStyle and algoBusy and not na(actIdx) and actIdx >= 0 and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
     if sharpOnly
         if inTradeNow or (fresh and planSideKeep != 0)
-            float eShow = inTradeNow ? array.get(tEntry, actIdx) : planEntryKeep
-            float sShow = inTradeNow ? array.get(tStop, actIdx) : planStopKeep
-            float t1Show = inTradeNow ? array.get(tTp1, actIdx) : planTpKeep
-            float t2Show = inTradeNow ? array.get(tTp2, actIdx) : planTp2Keep
-            float t3Show = inTradeNow ? array.get(tTp3, actIdx) : planTp3Keep
-            int sideShow = inTradeNow ? array.get(tSide, actIdx) : planSideKeep
-            string nameShow = inTradeNow ? array.get(tName, actIdx) : planNameKeep
+            float eShow = planEntryKeep
+            float sShow = planStopKeep
+            float t1Show = planTpKeep
+            float t2Show = planTp2Keep
+            float t3Show = planTp3Keep
+            int sideShow = planSideKeep
+            string nameShow = planNameKeep
+            int hitShow = 0
+            if inTradeNow
+                eShow := array.get(tEntry, actIdx)
+                sShow := array.get(tStop, actIdx)
+                t1Show := array.get(tTp1, actIdx)
+                t2Show := array.get(tTp2, actIdx)
+                t3Show := array.get(tTp3, actIdx)
+                sideShow := array.get(tSide, actIdx)
+                nameShow := array.get(tName, actIdx)
+                hitShow := array.get(tHitTp, actIdx)
             string headShow = inTradeNow ? (sideShow > 0 ? "В СДЕЛКЕ LONG" : "В СДЕЛКЕ SHORT") : (modeScalp ? (sideShow > 0 ? "BUY SCALP" : "SELL SCALP") : (sideShow > 0 ? (algoStyle ? "BUY / ЛОНГ" : "ВХОДИТЬ ЛОНГ") : (algoStyle ? "SELL / ШОРТ" : "ВХОДИТЬ ШОРТ")))
             color headCol = sideShow > 0 ? #0ECB81 : #F6465D
             table.cell(plan, 0, 0, "КОМАНДА", text_color = headCol, text_size = size.normal)
@@ -1617,7 +1663,7 @@ if barstate.islast and showPlan
             table.cell(plan, 0, 9, "Цель TP1", text_color = #848E9C, text_size = size.small)
             table.cell(plan, 1, 9, "+" + str.tostring(levPct(eShow, t1Show), "#.#") + "% маржа · цена +" + str.tostring(pxPct(eShow, t1Show), "#.##") + "%", text_color = #00E676, text_size = size.tiny)
             table.cell(plan, 0, 10, inTradeNow ? "TP hit" : "Свечей", text_color = #848E9C, text_size = size.small)
-            table.cell(plan, 1, 10, inTradeNow ? str.tostring(array.get(tHitTp, actIdx)) : str.tostring(bar_index - planBarKeep) + " / " + str.tostring(modeScalp ? math.max(signalBars, 8) : signalBars), text_color = #F0B90B, text_size = size.small)
+            table.cell(plan, 1, 10, inTradeNow ? str.tostring(hitShow) : str.tostring(bar_index - planBarKeep) + " / " + str.tostring(modeScalp ? math.max(signalBars, 8) : signalBars), text_color = #F0B90B, text_size = size.small)
         else
             table.cell(plan, 0, 0, "КОМАНДА", text_color = #848E9C, text_size = size.normal)
             table.cell(plan, 1, 0, "НЕ ВХОДИТЬ", text_color = #848E9C, text_size = size.large)
