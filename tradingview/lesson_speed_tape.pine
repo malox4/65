@@ -1,7 +1,6 @@
 //@version=6
-// Урок 21.02.2023 · Speed of Tape
-// пример↑/↓ + план куда должна идти цена + куда реально (тейк/стоп/мимо)
-indicator("65 SpeedTape", overlay = true, max_labels_count = 120, max_lines_count = 120)
+// Урок 21.02.2023 · Speed of Tape — простой учебный индикатор
+indicator("65 SpeedTape", overlay = true, max_labels_count = 60, max_lines_count = 40)
 
 grp = "План"
 volMult   = input.float(1.3, "Объём × SMA", minval = 1.0, step = 0.1, group = grp)
@@ -13,13 +12,13 @@ liveAtr   = input.float(0.5, "СЕЙЧАС если ≤ ATR× от входа", 
 freshBars = input.int(5, "Сигнал N свечей", minval = 1, maxval = 15, group = grp)
 atrLen    = input.int(14, "ATR", group = grp)
 showHist  = input.bool(true, "Примеры на истории", group = grp)
-lookN     = input.int(25, "Свечей на исход примера", minval = 5, maxval = 80, group = grp)
-histDraw  = input.int(8, "Сколько примеров с планом/исходом", minval = 1, maxval = 20, group = grp)
+lookN     = input.int(20, "Свечей ждать исход", minval = 5, maxval = 60, group = grp)
+histDraw  = input.int(4, "Сколько примеров разбирать", minval = 1, maxval = 10, group = grp)
 
 colGo = #0ECB81
 colStop = #F6465D
 colTp = #3B82F6
-colWait = #848E9C
+colWait = #2B3139
 colLate = #F6465D
 colNow = #F0B90B
 colSpeed = #F0B90B
@@ -54,7 +53,7 @@ if speedLong
         stop := s
         take := e + tpR * r
         side := 1
-        mode := "Speed+Vol · отбой снизу"
+        mode := "отбой снизу"
 
 if speedShort and na(entry)
     e = (high + close) / 2.0
@@ -65,7 +64,7 @@ if speedShort and na(entry)
         stop := s
         take := e - tpR * r
         side := -1
-        mode := "Speed+Vol · отбой сверху"
+        mode := "отбой сверху"
 
 var float eMem = na
 var float sMem = na
@@ -106,12 +105,14 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-barcolor(active ? color.new(colSpeed, 50) : na)
+// жёлтая = был всплеск объёма/плотности
+barcolor(active ? color.new(colSpeed, 55) : na)
 
-plotshape(showHist and speedLong, "пример↑", shape.triangleup, location.belowbar, colGo, size = size.small, text = "пример↑", textcolor = colGo)
-plotshape(showHist and speedShort, "пример↓", shape.triangledown, location.abovebar, colStop, size = size.small, text = "пример↓", textcolor = colStop)
+// мелкие метки-примеры
+plotshape(showHist and speedLong, title = "+", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.tiny)
+plotshape(showHist and speedShort, title = "-", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.tiny)
 
-// ——— после примера: план + куда реально ———
+// буфер примеров → исход
 var array<int>   exBi   = array.new_int()
 var array<int>   exSide = array.new_int()
 var array<float> exE    = array.new_float()
@@ -128,8 +129,7 @@ pushEx(int bi, int sSide, float e0, float s0, float t0) =>
     array.push(exT, t0)
     array.push(exOut, 0)
     array.push(exAge, 0)
-    maxKeep = histDraw + 5
-    while array.size(exBi) > maxKeep
+    while array.size(exBi) > histDraw + 3
         array.shift(exBi)
         array.shift(exSide)
         array.shift(exE)
@@ -143,14 +143,12 @@ if barstate.isconfirmed and showHist and (speedLong or speedShort) and not na(en
 
 if showHist and array.size(exBi) > 0
     for i = 0 to array.size(exBi) - 1
-        int o = array.get(exOut, i)
-        int bi0 = array.get(exBi, i)
-        if o == 0 and bar_index > bi0
-            int age = array.get(exAge, i) + 1
+        if array.get(exOut, i) == 0 and bar_index > array.get(exBi, i)
+            age = array.get(exAge, i) + 1
             array.set(exAge, i, age)
-            int sSide = array.get(exSide, i)
-            float s0 = array.get(exS, i)
-            float t0 = array.get(exT, i)
+            sSide = array.get(exSide, i)
+            s0 = array.get(exS, i)
+            t0 = array.get(exT, i)
             if sSide == 1
                 if low <= s0
                     array.set(exOut, i, -1)
@@ -176,6 +174,7 @@ if barstate.islast and showHist
         for k = 0 to array.size(histLabs) - 1
             label.delete(array.get(histLabs, k))
         array.clear(histLabs)
+
     nEx = array.size(exBi)
     if nEx > 0
         fromIdx = math.max(0, nEx - histDraw)
@@ -183,19 +182,15 @@ if barstate.islast and showHist
             bi = array.get(exBi, i)
             sSide = array.get(exSide, i)
             e0 = array.get(exE, i)
-            s0 = array.get(exS, i)
             t0 = array.get(exT, i)
             outc = array.get(exOut, i)
-            x2 = bi + lookN
-            cPlan = sSide == 1 ? colGo : colStop
-            array.push(histLines, line.new(bi, e0, x2, e0, color = color.new(cPlan, 35), width = 2, style = line.style_dashed))
-            array.push(histLines, line.new(bi, s0, x2, s0, color = color.new(colStop, 50), width = 1, style = line.style_dotted))
-            array.push(histLines, line.new(bi, t0, x2, t0, color = color.new(colTp, 35), width = 2, style = line.style_dashed))
-            array.push(histLines, line.new(bi, e0, bi + math.max(3, int(lookN * 0.35)), t0, color = color.new(colTp, 15), width = 2))
-            outTxt = outc == 1 ? "реально → ТЕЙК ✓" : outc == -1 ? "реально → СТОП ✗" : outc == 2 ? "реально → мимо" : "ещё идёт…"
-            planTxt = sSide == 1 ? "план: ВВЕРХ к тейку" : "план: ВНИЗ к тейку"
-            yLab = sSide == 1 ? math.min(e0, t0) : math.max(e0, t0)
-            array.push(histLabs, label.new(bi + int(lookN * 0.5), yLab, planTxt + "\n" + outTxt, style = label.style_label_center, color = color.new(outc == 1 ? colGo : outc == -1 ? colStop : colMiss, 10), textcolor = color.white, size = size.small))
+            // одна стрелка: от входа к тейку = КУДА ДОЛЖНА была идти
+            array.push(histLines, line.new(bi, e0, bi + math.max(4, int(lookN * 0.4)), t0, color = color.new(colTp, 20), width = 3))
+            dir = sSide == 1 ? "ВВЕРХ" : "ВНИЗ"
+            res = outc == 1 ? "сработало: ТЕЙК" : outc == -1 ? "не сработало: СТОП" : outc == 2 ? "мимо" : "ещё идёт"
+            txt = (sSide == 1 ? "ЛОНГ" : "ШОРТ") + " · план " + dir + "\n" + res
+            y = sSide == 1 ? e0 : e0
+            array.push(histLabs, label.new(bi + 2, y, txt, style = sSide == 1 ? label.style_label_up : label.style_label_down, color = color.new(outc == 1 ? colGo : outc == -1 ? colStop : colMiss, 5), textcolor = color.white, size = size.normal))
 
 var line lnE = na
 var line lnS = na
@@ -213,29 +208,30 @@ if barstate.islast
     label.delete(lbE)
     label.delete(lbS)
     label.delete(lbT)
-    x2 = bar_index + 8
+    x2 = bar_index + 6
 
     if status == "WAIT"
-        lb := label.new(x2, close, "СЕЙЧАС НЕ ВХОДИ\nпример↑ = план ВВЕРХ\nпример↓ = план ВНИЗ\nподпись у линий = куда реально\nвход только при СЕЙЧАС", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+        lb := label.new(x2, close, "НЕ ВХОДИ СЕЙЧАС\n\n▲ зелёный = учебный ЛОНГ\n▼ красный = учебный ШОРТ\nсиняя стрелка = куда план\nподпись = сработало или нет\n\nЖди статус СЕЙЧАС", style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
     else if status == "LATE"
-        lb := label.new(x2, close, "ОПОЗДАЛ · не догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
+        lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 0), textcolor = color.white, size = size.large)
     else
-        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди вход") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди вход")
+        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди цену") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди цену")
         col = side == 1 ? colGo : colStop
-        lb := label.new(x2, entry, sideTxt + "\n" + mode + "\n1 вход  2 стоп  3 тейк", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lb := label.new(x2, entry, sideTxt + "\n" + mode, style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
         lnE := line.new(nz(bornMem, bar_index), entry, x2, entry, color = colGo, width = 4)
         lnS := line.new(nz(bornMem, bar_index), stop, x2, stop, color = colStop, width = 3)
         lnT := line.new(nz(bornMem, bar_index), take, x2, take, color = colTp, width = 3)
-        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
-        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
-        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+        lbE := label.new(x2, entry, "1 ВХОД", style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "2 СТОП", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "3 ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
 
-var table t = table.new(position.top_right, 1, 3, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.top_right, 1, 4, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди ВХОД" : "⏳ ЖДИ"
+    big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "LATE" ? "ОПОЗДАЛ" : status == "WAIT_FILL" ? "жди ВХОД" : "ЖДИ"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
-    table.cell(t, 0, 1, haveSig ? (mode + "\nвход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "у примера: пунктир=план, подпись=куда реально", text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, "Алерт: колокол → 65 SpeedTape → Any alert()", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 1, "Жёлтая свеча = всплеск Speed/Vol", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "▲ лонг / ▼ шорт — только примеры", text_color = #848E9C, text_size = size.small)
+    table.cell(t, 0, 3, "Синяя линия = план · подпись = итог", text_color = #848E9C, text_size = size.small)
 
 newLong = speedLong and not na(bornMem) and bar_index == bornMem and side == 1
 newShort = speedShort and not na(bornMem) and bar_index == bornMem and side == -1
@@ -244,15 +240,15 @@ goShort = status == "NOW" and side == -1 and not (status[1] == "NOW" and side[1]
 
 if barstate.isconfirmed
     if newLong
-        alert("SPEED↑ ЛОНГ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
+        alert("SPEED ЛОНГ · " + syminfo.ticker, alert.freq_once_per_bar_close)
     if newShort
-        alert("SPEED↓ ШОРТ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
+        alert("SPEED ШОРТ · " + syminfo.ticker, alert.freq_once_per_bar_close)
     if goLong and not newLong
         alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
     if goShort and not newShort
         alert("ШОРТ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
 
-alertcondition(newLong, title = "Speed лонг", message = "ЛОНГ Speed")
-alertcondition(newShort, title = "Speed шорт", message = "ШОРТ Speed")
+alertcondition(newLong, title = "Speed лонг", message = "ЛОНГ")
+alertcondition(newShort, title = "Speed шорт", message = "ШОРТ")
 alertcondition(goLong, title = "Лонг сейчас", message = "ЛОНГ СЕЙЧАС")
 alertcondition(goShort, title = "Шорт сейчас", message = "ШОРТ СЕЙЧАС")
