@@ -1,0 +1,1701 @@
+//@version=6
+// 65 Map Algo — твоя TV-версия (карта всегда) + фикс RE10026 (Fib line слишком далеко)
+indicator("65 Map Algo", overlay = true, max_boxes_count = 300, max_lines_count = 300, max_labels_count = 300)
+
+// ── inputs ──────────────────────────────────────────────────────────────
+grpTrend = "Trend"
+lenFast  = input.int(20, "EMA fast", group = grpTrend)
+lenSlow  = input.int(50, "EMA slow", group = grpTrend)
+tf4h     = input.timeframe("240", "HTF 4h", group = grpTrend)
+
+grpSmc = "Smart Money"
+swingLen   = input.int(5, "Swing wing", minval = 2, maxval = 10, group = grpSmc)
+showLevels = input.bool(true, "Структурные уровни", group = grpSmc)
+showBos    = input.bool(true, "BOS / CHoCH", group = grpSmc)
+showOb     = input.bool(true, "Order Block", group = grpSmc)
+showSweep  = input.bool(true, "Снятие ликвидности", group = grpSmc)
+showFvg    = input.bool(true, "FVG имбаланс", group = grpSmc)
+fvgMinAtr  = input.float(0.25, "Мин FVG в ATR", minval = 0.05, step = 0.05, group = grpSmc)
+fvgMax     = input.int(5, "Макс FVG", minval = 1, maxval = 15, group = grpSmc)
+obMax      = input.int(4, "Макс Order Block", minval = 1, maxval = 10, group = grpSmc)
+
+grpFig = "Figures"
+showSqueeze = input.bool(true, "Сжатие", group = grpFig)
+sqBars      = input.int(12, "Свечей сжатия", group = grpFig)
+sqAtr       = input.float(2.5, "Ширина сжатия ATR", group = grpFig)
+showDouble  = input.bool(true, "Двойное дно/вершина", group = grpFig)
+dblTol      = input.float(0.35, "Допуск уровней ATR", group = grpFig)
+showHs      = input.bool(true, "Голова и плечи", group = grpFig)
+hsTol       = input.float(0.45, "Допуск плеч ATR", group = grpFig)
+
+grpFib = "SK Fib (как в видео TradersNotes)"
+showFib     = input.bool(true, "SK Fib сетап", group = grpFib)
+fibPivot    = input.int(5, "Pivot импульса", minval = 2, maxval = 20, group = grpFib, tooltip = "Как в видео: импульс = подтверждённый swing high → swing low (шорт) или low → high (лонг), не скользящее окно.")
+fibMinAtr   = input.float(2.0, "Мин импульс в ATR", minval = 0.5, step = 0.5, group = grpFib)
+fibZoneLo   = input.float(0.5, "Зона отката от", minval = 0.3, maxval = 0.7, step = 0.01, group = grpFib, tooltip = "В книге SK: зона 0.5–0.618")
+fibZoneHi   = input.float(0.618, "Зона отката до", minval = 0.5, maxval = 0.9, step = 0.01, group = grpFib)
+fibTp1      = input.float(1.272, "TP1 ext", step = 0.01, group = grpFib)
+fibTp2      = input.float(1.618, "TP2 ext", step = 0.01, group = grpFib)
+fibNeedHtf  = input.bool(false, "SK Fib только по 4h", group = grpFib, tooltip = "В видео часто без жёсткого 4h-фильтра. По умолчанию выкл.")
+
+grpExtra = "Доп. стратегии"
+useZ146     = input.bool(true, "Z146 уровень импульса", group = grpExtra)
+zK          = input.float(1.5, "Z146 разворот x ATR", group = grpExtra)
+zX          = input.float(4.0, "Z146 мин импульс x ATR", group = grpExtra)
+zBars       = input.int(24, "Z146 макс баров импульса", group = grpExtra)
+zCoef       = input.float(0.146, "Z146 коэффициент", group = grpExtra)
+useSweepRet = input.bool(true, "Sweep + ретест", group = grpExtra)
+sweepRetBars = input.int(12, "Sweep ретест: баров", minval = 3, maxval = 40, group = grpExtra)
+useEmaPb    = input.bool(true, "EMA откат по тренду", group = grpExtra)
+useFvgFill  = input.bool(true, "FVG fill вход", group = grpExtra)
+useAsia     = input.bool(true, "Пробой Asian range (UTC 0–8)", group = grpExtra)
+
+grpEntry = "Entry"
+entryMode = input.string("Scalp", "Движок входа", options = ["Scalp", "SK Fib", "SMC+", "Всё"], group = grpEntry, tooltip = "Scalp = 1m/5m: быстрые TP 0.5/1/1.5R, BE после TP1, тренд 15m. SK Fib = фибо. SMC+ = ретест. Всё = старый микс.")
+oneTrade   = input.bool(true, "Одна сделка за раз", group = grpEntry, tooltip = "Пока алго-сделка открыта — новые BUY/SELL не открываются.")
+sharpOnly   = input.bool(true, "Точечный режим: только ВХОДИТЬ ЛОНГ/ШОРТ", group = grpEntry)
+algoStyle   = input.bool(true, "Стиль алго Buy/Sell + TP1/2/3", group = grpEntry, tooltip = "Одна активная сделка: SL-зона + TP1/TP2/TP3. История — мелкие ▲/▼ с TP✓ или SL✗.")
+signalBars  = input.int(3, "Сигнал в карточке (свечей)", minval = 1, maxval = 8, group = grpEntry)
+tradeHorizon = input.int(48, "Горизонт сделки (свечей)", minval = 8, maxval = 200, group = grpEntry)
+maxHistTrades = input.int(20, "Сколько меток истории", minval = 5, maxval = 40, group = grpEntry)
+tp1R = input.float(1.0, "TP1 в R (не Scalp)", step = 0.25, group = grpEntry)
+tp2R = input.float(2.0, "TP2 в R (не Scalp)", step = 0.25, group = grpEntry)
+tp3R = input.float(3.0, "TP3 в R (не Scalp)", step = 0.25, group = grpEntry)
+grpScalp = "Scalp (малый ТФ)"
+scalpTp1 = input.float(0.5, "Scalp TP1 в R", step = 0.25, group = grpScalp)
+scalpTp2 = input.float(1.0, "Scalp TP2 в R", step = 0.25, group = grpScalp)
+scalpTp3 = input.float(1.5, "Scalp TP3 в R", step = 0.25, group = grpScalp)
+scalpHorizon = input.int(20, "Scalp горизонт (свечей)", minval = 6, maxval = 60, group = grpScalp)
+beAfterTp1 = input.bool(true, "После TP1 стоп → безубыток", group = grpScalp, tooltip = "Как на PEPE: забрать часть движения и не отдать всё обратно.")
+closeAtTp2 = input.bool(true, "Scalp: закрыть на TP2", group = grpScalp, tooltip = "TP3 только если closeAtTp2 выкл — раннер.")
+showEntries = input.bool(true, "Метка на свече (если алго выкл)", group = grpEntry)
+showPlan    = input.bool(true, "Карточка «План входа»", group = grpEntry)
+showGhost   = input.bool(false, "Потенциальная свеча", group = grpEntry)
+leverage    = input.float(20.0, "Плечо x", minval = 1, step = 1, group = grpEntry, tooltip = "Для расчёта % на марже: движение цены × плечо.")
+needHtf     = input.bool(true, "Фильтр старшего ТФ", group = grpEntry)
+needVol     = input.bool(false, "Объём ≥ 1.5x", group = grpEntry, tooltip = "На XAUUSD/FX тиковый объём часто врёт — по умолчанию выкл.")
+confirmBars = input.int(12, "Окно ретеста после CHoCH/BOS", minval = 3, maxval = 40, group = grpEntry, tooltip = "Вход не в бар пробоя, а на откате к OB/FVG/EMA в ближайшие N свечей.")
+cooldown    = input.int(12, "Пауза между входами", minval = 4, group = grpEntry)
+rr          = input.float(2.0, "Цель в R (метки без алго)", group = grpEntry)
+atrLen      = input.int(14, "ATR", group = grpEntry)
+modeSk = entryMode == "SK Fib"
+modeSmc = entryMode == "SMC+"
+modeAll = entryMode == "Всё"
+modeScalp = entryMode == "Scalp"
+useTp1R = modeScalp ? scalpTp1 : tp1R
+useTp2R = modeScalp ? scalpTp2 : tp2R
+useTp3R = modeScalp ? scalpTp3 : tp3R
+useHorizon = modeScalp ? scalpHorizon : tradeHorizon
+useConfirm = modeScalp ? math.min(confirmBars, 6) : confirmBars
+useCooldown = modeScalp ? math.min(cooldown, 5) : cooldown
+
+// ── helpers ─────────────────────────────────────────────────────────────
+word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
+col(v) => v > 0 ? #0ECB81 : v < 0 ? #F6465D : #848E9C
+
+htfTrend(tf) =>
+    f = request.security(syminfo.tickerid, tf, ta.ema(close, lenFast), lookahead = barmerge.lookahead_off)
+    s = request.security(syminfo.tickerid, tf, ta.ema(close, lenSlow), lookahead = barmerge.lookahead_off)
+    f > s ? 1 : f < s ? -1 : 0
+
+// % цены и % на марже при плече; ETA по ATR (примерно)
+pxPct(entry, px) => entry != 0 ? math.abs(px - entry) / entry * 100.0 : 0.0
+levPct(entry, px) => pxPct(entry, px) * leverage
+barMinutes() => math.max(timeframe.in_seconds() / 60.0, 1.0)
+etaMinutes(entry, target, atrPace) =>
+    float dist = math.abs(target - entry)
+    float pace = math.max(atrPace, entry * 0.00005)
+    int barsEta = int(math.max(1, math.ceil(dist / pace)))
+    barsEta * barMinutes()
+fmtMin(m) => m < 60 ? "~" + str.tostring(m, "#") + " мин" : "~" + str.tostring(m / 60.0, "#.#") + " ч"
+fmtSlLine(entry, stop) =>
+    str.tostring(stop, format.mintick) + " · −" + str.tostring(pxPct(entry, stop), "#.##") + "% · " + str.tostring(levPct(entry, stop), "#.#") + "% маржа"
+fmtTpLine(entry, tp) =>
+    str.tostring(tp, format.mintick) + " · +" + str.tostring(pxPct(entry, tp), "#.##") + "% · +" + str.tostring(levPct(entry, tp), "#.#") + "% x" + str.tostring(leverage, "#")
+fmtEtaLine(entry, tp1, tp2, atrPace) =>
+    "TP1 " + fmtMin(etaMinutes(entry, tp1, atrPace)) + " · TP2 " + fmtMin(etaMinutes(entry, tp2, atrPace))
+
+trimLabels(arr, maxN) =>
+    while array.size(arr) > maxN
+        label.delete(array.shift(arr))
+
+trimLines(arr, maxN) =>
+    while array.size(arr) > maxN
+        line.delete(array.shift(arr))
+
+trimBoxes(arr, maxN) =>
+    while array.size(arr) > maxN
+        box.delete(array.shift(arr))
+
+trimBoxesTyped(boxes, types, maxN) =>
+    while array.size(boxes) > maxN
+        box.delete(array.shift(boxes))
+        array.shift(types)
+
+// TV RE10026 fix: bar_index too far for line/box
+clampBar(b) =>
+    int lim = bar_index - 490
+    na(b) ? lim : int(math.max(b, lim))
+
+hiBetween(fromBar, toBar) =>
+    int left = math.min(fromBar, toBar)
+    int right = math.max(fromBar, toBar)
+    float mx = high[bar_index - right]
+    for i = 0 to right - left
+        mx := math.max(mx, high[bar_index - (right - i)])
+    mx
+
+loBetween(fromBar, toBar) =>
+    int left = math.min(fromBar, toBar)
+    int right = math.max(fromBar, toBar)
+    float mn = low[bar_index - right]
+    for i = 0 to right - left
+        mn := math.min(mn, low[bar_index - (right - i)])
+    mn
+
+// ── base ────────────────────────────────────────────────────────────────
+emaF = ta.ema(close, lenFast)
+emaS = ta.ema(close, lenSlow)
+atrV = ta.atr(atrLen)
+volMa = ta.sma(volume, 20)
+trendChart = emaF > emaS ? 1 : emaF < emaS ? -1 : 0
+trend4h = htfTrend(tf4h)
+trend15 = htfTrend("15")
+ok = barstate.isconfirmed
+// если объёма почти нет (часто FX/золото) — фильтр не применяем
+volReliable = volMa > 0 and ta.highest(volume, 50) > ta.lowest(volume, 50) * 1.05
+volOk = not needVol or not volReliable or volume >= 1.5 * volMa
+// скальп смотрит 15m, не 4h — иначе на 1m/5m почти нет сделок
+trendFilter = modeScalp ? trend15 : trend4h
+htfLong = not needHtf or trendFilter == 1
+htfShort = not needHtf or trendFilter == -1
+
+plot(emaF, "EMA20", color = #F0B90B)
+plot(emaS, "EMA50", color = #848E9C)
+bgcolor(trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
+
+var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(dash, 0, 0, "График", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 1, 0, word(trendChart), text_color = col(trendChart), text_size = size.small)
+    table.cell(dash, 0, 1, "4h", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 1, 1, word(trend4h), text_color = col(trend4h), text_size = size.small)
+    table.cell(dash, 0, 2, "Структура", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 0, 3, "Уровень", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 0, 4, "Ждём", text_color = #848E9C, text_size = size.small)
+    table.cell(dash, 0, 5, "SK Fib", text_color = #848E9C, text_size = size.small)
+
+// ── structure swings ────────────────────────────────────────────────────
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float sh1 = na
+var float sh2 = na
+var float sl1 = na
+var float sl2 = na
+var int sh1Bar = na
+var int sl1Bar = na
+var int structure = 0
+var line lvlHigh = na
+var line lvlLow = na
+var label lblHigh = na
+var label lblLow = na
+var array<label> eventLabels = array.new<label>()
+var array<box> obBoxes = array.new<box>()
+var array<int> obTypes = array.new<int>()
+var array<box> fvgBoxes = array.new<box>()
+var array<int> fvgTypes = array.new<int>()
+var array<label> entryLabels = array.new<label>()
+var array<line> entryLines = array.new<line>()
+
+if not na(ph)
+    sh2 := sh1
+    sh1 := ph
+    sh1Bar := bar_index - swingLen
+if not na(pl)
+    sl2 := sl1
+    sl1 := pl
+    sl1Bar := bar_index - swingLen
+
+if not na(sh1) and not na(sh2) and not na(sl1) and not na(sl2)
+    if sh1 > sh2 and sl1 > sl2
+        structure := 1
+    if sh1 < sh2 and sl1 < sl2
+        structure := -1
+
+if showLevels and barstate.islast
+    if not na(lvlHigh)
+        line.delete(lvlHigh)
+    if not na(lvlLow)
+        line.delete(lvlLow)
+    if not na(lblHigh)
+        label.delete(lblHigh)
+    if not na(lblLow)
+        label.delete(lblLow)
+    if not na(sh1)
+        lvlHigh := line.new(clampBar(sh1Bar), sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
+        lblHigh := label.new(bar_index + 3, sh1, "уровень H\n" + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
+    if not na(sl1)
+        lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
+        lblLow := label.new(bar_index + 3, sl1, "уровень L\n" + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
+
+if barstate.islast and not modeScalp
+    table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
+    table.cell(dash, 1, 3, not na(sh1) and not na(sl1) ? str.tostring(sh1, format.mintick) + " / " + str.tostring(sl1, format.mintick) : "—", text_color = #EAECEF, text_size = size.tiny)
+
+findBullOb() =>
+    float hi = na
+    float lo = na
+    int bi = na
+    for i = 1 to 10
+        if close[i] < open[i]
+            hi := high[i]
+            lo := low[i]
+            bi := bar_index - i
+            break
+    [bi, hi, lo]
+
+findBearOb() =>
+    float hi = na
+    float lo = na
+    int bi = na
+    for i = 1 to 10
+        if close[i] > open[i]
+            hi := high[i]
+            lo := low[i]
+            bi := bar_index - i
+            break
+    [bi, hi, lo]
+
+// BOS / CHoCH
+bosUp = ok and not na(sh1) and close > sh1 and close[1] <= sh1
+bosDn = ok and not na(sl1) and close < sl1 and close[1] >= sl1
+isChoChUp = bosUp and structure < 0
+isChoChDn = bosDn and structure > 0
+isBosUp = bosUp and not isChoChUp
+isBosDn = bosDn and not isChoChDn
+
+// карта всегда: CHoCH / BOS / снятие (алго-сделка рисуется отдельно)
+if showBos and isBosUp
+    array.push(eventLabels, label.new(bar_index, low, "ПРОБОЙ BOS ↑", style = label.style_label_up, color = color.new(#26A69A, 10), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 10)
+if showBos and isBosDn
+    array.push(eventLabels, label.new(bar_index, high, "ПРОБОЙ BOS ↓", style = label.style_label_down, color = color.new(#26A69A, 10), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 10)
+if showBos and isChoChUp
+    array.push(eventLabels, label.new(bar_index, low, "СМЕНА CHoCH ↑\nбыл медвежий", style = label.style_label_up, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.small))
+    trimLabels(eventLabels, 10)
+if showBos and isChoChDn
+    array.push(eventLabels, label.new(bar_index, high, "СМЕНА CHoCH ↓\nбыл бычий", style = label.style_label_down, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.small))
+    trimLabels(eventLabels, 10)
+
+if showOb and (isBosUp or isChoChUp)
+    [obi, obh, obl] = findBullOb()
+    if not na(obi)
+        array.push(obBoxes, box.new(obi, obh, bar_index + 8, obl, border_color = color.new(#7C4DFF, 20), bgcolor = color.new(#7C4DFF, 78), border_width = 1, text = "OB спрос", text_color = #B388FF, text_size = size.tiny))
+        array.push(obTypes, 1)
+        trimBoxesTyped(obBoxes, obTypes, obMax)
+if showOb and (isBosDn or isChoChDn)
+    [obi, obh, obl] = findBearOb()
+    if not na(obi)
+        array.push(obBoxes, box.new(obi, obh, bar_index + 8, obl, border_color = color.new(#D500F9, 15), bgcolor = color.new(#AA00FF, 75), border_width = 1, text = "OB предложение", text_color = #E040FB, text_size = size.tiny))
+        array.push(obTypes, -1)
+        trimBoxesTyped(obBoxes, obTypes, obMax)
+
+if showOb and array.size(obBoxes) > 0
+    for i = array.size(obBoxes) - 1 to 0
+        bx = array.get(obBoxes, i)
+        tp = array.get(obTypes, i)
+        // тянем зону вправо; снимаем только при закрытии сквозь зону
+        box.set_right(bx, bar_index + 2)
+        if tp == 1 and close < box.get_bottom(bx)
+            box.delete(bx)
+            array.remove(obBoxes, i)
+            array.remove(obTypes, i)
+        else if tp == -1 and close > box.get_top(bx)
+            box.delete(bx)
+            array.remove(obBoxes, i)
+            array.remove(obTypes, i)
+
+inBullOb = false
+inBearOb = false
+if array.size(obBoxes) > 0
+    for i = 0 to array.size(obBoxes) - 1
+        bx = array.get(obBoxes, i)
+        tp = array.get(obTypes, i)
+        if low <= box.get_top(bx) and high >= box.get_bottom(bx)
+            if tp == 1
+                inBullOb := true
+            if tp == -1
+                inBearOb := true
+
+sweepUp = ok and showSweep and not na(sh1) and high > sh1 and close < sh1 and close < open
+sweepDn = ok and showSweep and not na(sl1) and low < sl1 and close > sl1 and close > open
+if sweepUp
+    array.push(eventLabels, label.new(bar_index, high, "СНЯТИЕ ↑\nликвидность над " + str.tostring(sh1, format.mintick), style = label.style_label_down, color = color.new(#FF6D00, 10), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 10)
+if sweepDn
+    array.push(eventLabels, label.new(bar_index, low, "СНЯТИЕ ↓\nликвидность под " + str.tostring(sl1, format.mintick), style = label.style_label_up, color = color.new(#FF6D00, 10), textcolor = color.white, size = size.small))
+    trimLabels(eventLabels, 10)
+
+bullGap = ok and showFvg and low > high[2] and (low - high[2]) >= fvgMinAtr * atrV
+bearGap = ok and showFvg and high < low[2] and (low[2] - high) >= fvgMinAtr * atrV
+if bullGap
+    array.push(fvgBoxes, box.new(bar_index - 2, low, bar_index + 25, high[2], border_color = color.new(#00BCD4, 30), bgcolor = color.new(#00BCD4, 82), border_width = 1, text = "FVG ↑", text_color = #00E5FF, text_size = size.tiny))
+    array.push(fvgTypes, 1)
+    trimBoxesTyped(fvgBoxes, fvgTypes, fvgMax)
+if bearGap
+    array.push(fvgBoxes, box.new(bar_index - 2, low[2], bar_index + 25, high, border_color = color.new(#FF4081, 30), bgcolor = color.new(#FF4081, 82), border_width = 1, text = "FVG ↓", text_color = #FF80AB, text_size = size.tiny))
+    array.push(fvgTypes, -1)
+    trimBoxesTyped(fvgBoxes, fvgTypes, fvgMax)
+
+if showFvg and array.size(fvgBoxes) > 0
+    for i = array.size(fvgBoxes) - 1 to 0
+        bx = array.get(fvgBoxes, i)
+        tp = array.get(fvgTypes, i)
+        box.set_right(bx, bar_index + 2)
+        if tp == 1 and low <= box.get_bottom(bx)
+            box.delete(bx)
+            array.remove(fvgBoxes, i)
+            array.remove(fvgTypes, i)
+        else if tp == -1 and high >= box.get_top(bx)
+            box.delete(bx)
+            array.remove(fvgBoxes, i)
+            array.remove(fvgTypes, i)
+
+inBullFvg = false
+inBearFvg = false
+if array.size(fvgBoxes) > 0
+    for i = 0 to array.size(fvgBoxes) - 1
+        bx = array.get(fvgBoxes, i)
+        tp = array.get(fvgTypes, i)
+        if low <= box.get_top(bx) and high >= box.get_bottom(bx)
+            if tp == 1
+                inBullFvg := true
+            if tp == -1
+                inBearFvg := true
+
+sqHigh = ta.highest(high, sqBars)
+sqLow = ta.lowest(low, sqBars)
+inSqueeze = (sqHigh - sqLow) <= sqAtr * atrV and (sqHigh - sqLow) > 0
+sqBreakUp = ok and showSqueeze and inSqueeze[1] and close > sqHigh[1] and close[1] <= sqHigh[1]
+sqBreakDn = ok and showSqueeze and inSqueeze[1] and close < sqLow[1] and close[1] >= sqLow[1]
+var box sqBox = na
+if showSqueeze
+    if inSqueeze
+        if na(sqBox)
+            sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 25), bgcolor = color.new(#F0B90B, 92), border_style = line.style_dashed, text = "сжатие · ждём пробой", text_color = #F0B90B, text_size = size.tiny)
+        else
+            box.set_right(sqBox, bar_index)
+            box.set_top(sqBox, sqHigh)
+            box.set_bottom(sqBox, sqLow)
+    else if not na(sqBox)
+        box.set_right(sqBox, bar_index)
+        sqBox := na
+else if not na(sqBox)
+    box.delete(sqBox)
+    sqBox := na
+
+var float p1L = na
+var float p2L = na
+var int p1Lb = na
+var int p2Lb = na
+var float p1H = na
+var float p2H = na
+var int p1Hb = na
+var int p2Hb = na
+var float neckL = na
+var float neckH = na
+var float extL = na
+var float extH = na
+var line neckLineL = na
+var line neckLineH = na
+var label neckWaitL = na
+var label neckWaitH = na
+var int usedDblUp = na
+var int usedDblDn = na
+
+if not na(pl)
+    p1L := p2L
+    p1Lb := p2Lb
+    p2L := pl
+    p2Lb := bar_index - swingLen
+    if not na(p1L) and not na(p2L) and not na(p1Lb) and p2Lb - p1Lb >= 8 and p2Lb - p1Lb <= 60 and math.abs(p2L - p1L) <= dblTol * atrV
+        neckL := hiBetween(p1Lb, p2Lb)
+        extL := math.min(p1L, p2L)
+if not na(ph)
+    p1H := p2H
+    p1Hb := p2Hb
+    p2H := ph
+    p2Hb := bar_index - swingLen
+    if not na(p1H) and not na(p2H) and not na(p1Hb) and p2Hb - p1Hb >= 8 and p2Hb - p1Hb <= 60 and math.abs(p2H - p1H) <= dblTol * atrV
+        neckH := loBetween(p1Hb, p2Hb)
+        extH := math.max(p1H, p2H)
+
+if showDouble and barstate.islast
+    if not na(neckLineL)
+        line.delete(neckLineL)
+    if not na(neckLineH)
+        line.delete(neckLineH)
+    if not na(neckWaitL)
+        label.delete(neckWaitL)
+    if not na(neckWaitH)
+        label.delete(neckWaitH)
+    allowWaitUp = not sharpOnly or trend4h >= 0
+    allowWaitDn = not sharpOnly or trend4h <= 0
+    if allowWaitUp and not na(neckL) and not na(extL) and close <= neckL
+        neckLineL := line.new(clampBar(p2Lb), neckL, bar_index + 2, neckL, color = #0ECB81, style = line.style_dashed)
+        neckWaitL := label.new(bar_index + 2, neckL, sharpOnly ? "ждём шею ↑" : "фигура: двойное дно\nждём пробой шеи вверх", style = label.style_label_left, color = color.new(#0ECB81, 20), textcolor = color.white, size = size.tiny)
+    if allowWaitDn and not na(neckH) and not na(extH) and close >= neckH
+        neckLineH := line.new(clampBar(p2Hb), neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
+        neckWaitH := label.new(bar_index + 2, neckH, sharpOnly ? "ждём шею ↓" : "фигура: двойная вершина\nждём пробой шеи вниз", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.tiny)
+else if modeScalp and barstate.islast
+    if not na(neckLineL)
+        line.delete(neckLineL)
+        neckLineL := na
+    if not na(neckLineH)
+        line.delete(neckLineH)
+        neckLineH := na
+    if not na(neckWaitL)
+        label.delete(neckWaitL)
+        neckWaitL := na
+    if not na(neckWaitH)
+        label.delete(neckWaitH)
+        neckWaitH := na
+
+rawDblUp = showDouble and ok and not na(neckL) and close > neckL and close[1] <= neckL and not na(extL) and neckL - extL >= atrV
+rawDblDn = showDouble and ok and not na(neckH) and close < neckH and close[1] >= neckH and not na(extH) and extH - neckH >= atrV
+dblUp = rawDblUp and (na(usedDblUp) or bar_index - usedDblUp >= useCooldown)
+dblDn = rawDblDn and (na(usedDblDn) or bar_index - usedDblDn >= useCooldown)
+if dblUp
+    usedDblUp := bar_index
+if dblDn
+    usedDblDn := bar_index
+
+waitDblUp = showDouble and not na(neckL) and not na(extL) and close <= neckL
+waitDblDn = showDouble and not na(neckH) and not na(extH) and close >= neckH
+
+// ── голова и плечи / перевёрнутая ───────────────────────────────────────
+var array<float> hsHi = array.new<float>()
+var array<int> hsHiB = array.new<int>()
+var array<float> hsLo = array.new<float>()
+var array<int> hsLoB = array.new<int>()
+if not na(ph)
+    array.push(hsHi, ph)
+    array.push(hsHiB, bar_index - swingLen)
+    while array.size(hsHi) > 5
+        array.shift(hsHi)
+        array.shift(hsHiB)
+if not na(pl)
+    array.push(hsLo, pl)
+    array.push(hsLoB, bar_index - swingLen)
+    while array.size(hsLo) > 5
+        array.shift(hsLo)
+        array.shift(hsLoB)
+
+var float hsNeck = na
+var float hsExt = na
+var float hsLsPx = na
+var float hsRsPx = na
+var int hsLsB = na
+var int hsHeadB = na
+var int hsRsB = na
+var int hsSide = 0  // -1 классика шорт, +1 перевёрнутая лонг
+var line hsNeckLn = na
+var line hsLsLn = na
+var line hsRsLn = na
+var label hsLbl = na
+var int usedHsUp = na
+var int usedHsDn = na
+
+detectBearHs() =>
+    float neck = na
+    float ext = na
+    float lsPx = na
+    float rsPx = na
+    int lsB = na
+    int hdB = na
+    int rsB = na
+    bool okPat = false
+    if array.size(hsHi) >= 3
+        int n = array.size(hsHi)
+        float ls = array.get(hsHi, n - 3)
+        float hd = array.get(hsHi, n - 2)
+        float rs = array.get(hsHi, n - 1)
+        int lb = array.get(hsHiB, n - 3)
+        int hb = array.get(hsHiB, n - 2)
+        int rb = array.get(hsHiB, n - 1)
+        if hd > ls and hd > rs and math.abs(ls - rs) <= hsTol * atrV and rb - lb >= 12 and rb - lb <= 90
+            float trough1 = loBetween(lb, hb)
+            float trough2 = loBetween(hb, rb)
+            if not na(trough1) and not na(trough2) and math.abs(trough1 - trough2) <= hsTol * atrV * 1.2
+                neck := (trough1 + trough2) * 0.5
+                ext := hd
+                lsPx := ls
+                rsPx := rs
+                lsB := lb
+                hdB := hb
+                rsB := rb
+                okPat := hd > neck and ls > neck and rs > neck
+    [okPat, neck, ext, lsPx, rsPx, lsB, hdB, rsB]
+
+detectBullHs() =>
+    float neck = na
+    float ext = na
+    float lsPx = na
+    float rsPx = na
+    int lsB = na
+    int hdB = na
+    int rsB = na
+    bool okPat = false
+    if array.size(hsLo) >= 3
+        int n = array.size(hsLo)
+        float ls = array.get(hsLo, n - 3)
+        float hd = array.get(hsLo, n - 2)
+        float rs = array.get(hsLo, n - 1)
+        int lb = array.get(hsLoB, n - 3)
+        int hb = array.get(hsLoB, n - 2)
+        int rb = array.get(hsLoB, n - 1)
+        if hd < ls and hd < rs and math.abs(ls - rs) <= hsTol * atrV and rb - lb >= 12 and rb - lb <= 90
+            float peak1 = hiBetween(lb, hb)
+            float peak2 = hiBetween(hb, rb)
+            if not na(peak1) and not na(peak2) and math.abs(peak1 - peak2) <= hsTol * atrV * 1.2
+                neck := (peak1 + peak2) * 0.5
+                ext := hd
+                lsPx := ls
+                rsPx := rs
+                lsB := lb
+                hdB := hb
+                rsB := rb
+                okPat := hd < neck and ls < neck and rs < neck
+    [okPat, neck, ext, lsPx, rsPx, lsB, hdB, rsB]
+
+if showHs and (not na(ph) or not na(pl))
+    [bearOk, bearNeck, bearExt, bearLsPx, bearRsPx, bearLs, bearHd, bearRs] = detectBearHs()
+    [bullOk, bullNeck, bullExt, bullLsPx, bullRsPx, bullLs, bullHd, bullRs] = detectBullHs()
+    if bearOk and (not bullOk or bearRs >= bullRs)
+        hsNeck := bearNeck
+        hsExt := bearExt
+        hsLsPx := bearLsPx
+        hsRsPx := bearRsPx
+        hsLsB := bearLs
+        hsHeadB := bearHd
+        hsRsB := bearRs
+        hsSide := -1
+    else if bullOk
+        hsNeck := bullNeck
+        hsExt := bullExt
+        hsLsPx := bullLsPx
+        hsRsPx := bullRsPx
+        hsLsB := bullLs
+        hsHeadB := bullHd
+        hsRsB := bullRs
+        hsSide := 1
+
+// сброс залипшей Г-П: пробой головы против фигуры или таймаут
+if hsSide < 0 and not na(hsExt) and close > hsExt
+    hsSide := 0
+if hsSide > 0 and not na(hsExt) and close < hsExt
+    hsSide := 0
+if hsSide != 0 and not na(hsRsB) and bar_index - hsRsB > 80
+    hsSide := 0
+if not na(neckL) and not na(extL) and (close < extL or bar_index - p2Lb > 80)
+    neckL := na
+    extL := na
+if not na(neckH) and not na(extH) and (close > extH or bar_index - p2Hb > 80)
+    neckH := na
+    extH := na
+
+if showHs and barstate.islast
+    if not na(hsNeckLn)
+        line.delete(hsNeckLn)
+    if not na(hsLsLn)
+        line.delete(hsLsLn)
+    if not na(hsRsLn)
+        line.delete(hsRsLn)
+    if not na(hsLbl)
+        label.delete(hsLbl)
+    hsNeckLn := na
+    hsLsLn := na
+    hsRsLn := na
+    hsLbl := na
+    if hsSide != 0 and not na(hsNeck) and not na(hsExt) and not na(hsLsB) and not na(hsRsB) and not na(hsLsPx) and not na(hsRsPx)
+        color hsC = hsSide > 0 ? #0ECB81 : #F6465D
+        int hsX0 = clampBar(hsLsB)
+        int hsXh = clampBar(hsHeadB)
+        int hsXr = clampBar(hsRsB)
+        hsNeckLn := line.new(hsX0, hsNeck, bar_index + 2, hsNeck, color = hsC, style = line.style_solid, width = 2)
+        hsLsLn := line.new(hsX0, hsLsPx, hsXh, hsExt, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
+        hsRsLn := line.new(hsXh, hsExt, hsXr, hsRsPx, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
+        string hsTxt = hsSide > 0 ? "перев. голова-плечи\nждём шею ↑" : "голова-плечи\nждём шею ↓"
+        bool stillWait = hsSide > 0 ? close <= hsNeck : close >= hsNeck
+        if stillWait
+            hsLbl := label.new(bar_index + 2, hsNeck, hsTxt, style = label.style_label_left, color = color.new(hsC, 15), textcolor = color.white, size = size.small)
+else if modeScalp and barstate.islast
+    if not na(hsNeckLn)
+        line.delete(hsNeckLn)
+        hsNeckLn := na
+    if not na(hsLsLn)
+        line.delete(hsLsLn)
+        hsLsLn := na
+    if not na(hsRsLn)
+        line.delete(hsRsLn)
+        hsRsLn := na
+    if not na(hsLbl)
+        label.delete(hsLbl)
+        hsLbl := na
+
+rawHsUp = showHs and ok and hsSide > 0 and not na(hsNeck) and not na(hsExt) and close > hsNeck and close[1] <= hsNeck and hsNeck - hsExt >= atrV
+rawHsDn = showHs and ok and hsSide < 0 and not na(hsNeck) and not na(hsExt) and close < hsNeck and close[1] >= hsNeck and hsExt - hsNeck >= atrV
+hsUp = rawHsUp and (na(usedHsUp) or bar_index - usedHsUp >= useCooldown)
+hsDn = rawHsDn and (na(usedHsDn) or bar_index - usedHsDn >= useCooldown)
+if hsUp
+    usedHsUp := bar_index
+if hsDn
+    usedHsDn := bar_index
+waitHsUp = showHs and hsSide > 0 and not na(hsNeck) and not na(hsExt) and close <= hsNeck
+waitHsDn = showHs and hsSide < 0 and not na(hsNeck) and not na(hsExt) and close >= hsNeck
+
+// Potential entries: после CHoCH/BOS ждём РЕТЕСТ (OB / FVG / EMA), не сам бар пробоя
+var int pendLongBar = na
+var int pendShortBar = na
+var string pendLongWhy = "—"
+var string pendShortWhy = "—"
+if isChoChUp or isBosUp
+    pendLongBar := bar_index
+    pendLongWhy := isChoChUp ? "CHoCH ↑" : "BOS ↑"
+    pendShortBar := na
+if isChoChDn or isBosDn
+    pendShortBar := bar_index
+    pendShortWhy := isChoChDn ? "CHoCH ↓" : "BOS ↓"
+    pendLongBar := na
+if not na(pendLongBar) and bar_index - pendLongBar > useConfirm
+    pendLongBar := na
+if not na(pendShortBar) and bar_index - pendShortBar > useConfirm
+    pendShortBar := na
+
+retestLong = not na(pendLongBar) and bar_index > pendLongBar and (inBullOb or inBullFvg or low <= emaF and close >= emaF) and close > open
+retestShort = not na(pendShortBar) and bar_index > pendShortBar and (inBearOb or inBearFvg or high >= emaF and close <= emaF) and close < open
+smcLongOk = retestLong
+smcShortOk = retestShort
+// на минутке фигуры почти всегда шум — скальп только ретест / EMA / sweep
+figLongOk = modeScalp ? false : (sqBreakUp or dblUp or hsUp)
+figShortOk = modeScalp ? false : (sqBreakDn or dblDn or hsDn)
+longSetup = showEntries and ok and htfLong and volOk and (figLongOk or smcLongOk)
+shortSetup = showEntries and ok and htfShort and volOk and (figShortOk or smcShortOk)
+
+waiting = not na(pendLongBar) ? "ретест после " + pendLongWhy : not na(pendShortBar) ? "ретест после " + pendShortWhy : inSqueeze ? "пробой сжатия" : waitHsUp ? "пробой перев. Г-П" : waitHsDn ? "пробой головы-плеч" : waitDblUp ? "пробой двойного дна" : waitDblDn ? "пробой двойной вершины" : inBullOb or inBearOb ? "возврат в OB" : inBullFvg or inBearFvg ? "работа с FVG" : "—"
+if barstate.islast and not modeScalp
+    table.cell(dash, 1, 4, waiting, text_color = #F0B90B, text_size = size.tiny)
+
+var int lastLong = na
+var int lastShort = na
+longFire = longSetup and (na(lastLong) or bar_index - lastLong >= useCooldown)
+shortFire = shortSetup and (na(lastShort) or bar_index - lastShort >= useCooldown)
+if longFire
+    lastLong := bar_index
+    pendLongBar := na
+if shortFire
+    lastShort := bar_index
+    pendShortBar := na
+
+figLong = hsUp ? "голова-плечи ↑" : dblUp ? "двойное дно" : sqBreakUp ? "пробой сжатия" : smcLongOk ? pendLongWhy + " ретест" : "вход"
+figShort = hsDn ? "голова-плечи ↓" : dblDn ? "двойная вершина" : sqBreakDn ? "пробой сжатия" : smcShortOk ? pendShortWhy + " ретест" : "вход"
+
+longStop = longFire ? (hsUp and not na(hsExt) ? hsExt - 0.1 * atrV : dblUp and not na(extL) ? extL - 0.1 * atrV : sqBreakUp ? sqLow[1] - 0.1 * atrV : math.min(low, low[1], emaF) - 0.1 * atrV) : na
+shortStop = shortFire ? (hsDn and not na(hsExt) ? hsExt + 0.1 * atrV : dblDn and not na(extH) ? extH + 0.1 * atrV : sqBreakDn ? sqHigh[1] + 0.1 * atrV : math.max(high, high[1], emaF) + 0.1 * atrV) : na
+longRisk = longFire ? close - longStop : na
+shortRisk = shortFire ? shortStop - close : na
+longTp = longFire and not na(longRisk) and longRisk > 0 ? close + rr * longRisk : na
+shortTp = shortFire and not na(shortRisk) and shortRisk > 0 ? close - rr * shortRisk : na
+
+if showEntries and longFire and not na(longRisk) and longRisk > 0 and not algoStyle
+    txtL = sharpOnly ? "ВХОДИТЬ ЛОНГ\n" + figLong + "\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(longStop, format.mintick) + "\nтейк " + str.tostring(longTp, format.mintick) : "ПОТЕНЦ. ЛОНГ\nфигура: " + figLong + "\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(longStop, format.mintick) + "\nцель " + str.tostring(longTp, format.mintick) + " (" + str.tostring(rr, "#.#") + "R)"
+    array.push(entryLabels, label.new(bar_index, low, txtL, style = label.style_label_up, color = color.new(#0ECB81, 0), textcolor = color.white, size = sharpOnly ? size.normal : size.small))
+    array.push(entryLines, line.new(bar_index, longStop, bar_index + 12, longStop, color = #F6465D, style = line.style_dashed, width = 2))
+    array.push(entryLines, line.new(bar_index, longTp, bar_index + 12, longTp, color = #0ECB81, style = line.style_dashed, width = 2))
+    trimLabels(entryLabels, sharpOnly ? 1 : 4)
+    trimLines(entryLines, sharpOnly ? 2 : 8)
+
+if showEntries and shortFire and not na(shortRisk) and shortRisk > 0 and not algoStyle
+    txtS = sharpOnly ? "ВХОДИТЬ ШОРТ\n" + figShort + "\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(shortStop, format.mintick) + "\nтейк " + str.tostring(shortTp, format.mintick) : "ПОТЕНЦ. ШОРТ\nфигура: " + figShort + "\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(shortStop, format.mintick) + "\nцель " + str.tostring(shortTp, format.mintick) + " (" + str.tostring(rr, "#.#") + "R)"
+    array.push(entryLabels, label.new(bar_index, high, txtS, style = label.style_label_down, color = color.new(#F6465D, 0), textcolor = color.white, size = sharpOnly ? size.normal : size.small))
+    array.push(entryLines, line.new(bar_index, shortStop, bar_index + 12, shortStop, color = #F6465D, style = line.style_dashed, width = 2))
+    array.push(entryLines, line.new(bar_index, shortTp, bar_index + 12, shortTp, color = #0ECB81, style = line.style_dashed, width = 2))
+    trimLabels(entryLabels, sharpOnly ? 1 : 4)
+    trimLines(entryLines, sharpOnly ? 2 : 8)
+
+// ── SK Fib как в видео (книга TradersNotes / SK System) ─────────────────
+// ШОРТ: импульс high→low → Fib от high(0) к low(1) → откат в 0.5–0.618 →
+//       медвежья свеча → стоп над 0.618/хаем отката → TP 1.272 / 1.618
+// ЛОНГ: зеркально low→high.
+fibPh = ta.pivothigh(high, fibPivot, fibPivot)
+fibPl = ta.pivotlow(low, fibPivot, fibPivot)
+
+var float skA = na          // точка A импульса (high для шорта / low для лонга)
+var float skB = na          // точка B (low для шорта / high для лонга)
+var int skABar = na
+var int skBBar = na
+var int skSide = 0          // -1 шорт-импульс, +1 лонг-импульс
+var float skPullExt = na    // экстремум отката (high для шорта / low для лонга)
+
+if not na(fibPh)
+    phPrice = high[fibPivot]
+    phBar = bar_index - fibPivot
+    if skSide == 1 and not na(skA) and phBar > skABar and phPrice > skA
+        // лонг-импульс: A=low уже есть → этот high = B
+        skB := phPrice
+        skBBar := phBar
+        skPullExt := na
+    else if skSide == -1 and not na(skA) and na(skB) and phBar >= skABar and phPrice >= skA
+        // шорт ещё без B: обновили более высокий A
+        skA := phPrice
+        skABar := phBar
+    else if skSide == -1 and not na(skB)
+        // импульс шорт уже готов — хаи отката не сбрасывают Fib (как в видео)
+        skPullExt := na(skPullExt) ? phPrice : math.max(skPullExt, phPrice)
+    else
+        // новый шорт-импульс: A = high
+        skA := phPrice
+        skABar := phBar
+        skB := na
+        skBBar := na
+        skSide := -1
+        skPullExt := na
+
+if not na(fibPl)
+    plPrice = low[fibPivot]
+    plBar = bar_index - fibPivot
+    if skSide == -1 and not na(skA) and plBar > skABar and plPrice < skA
+        // шорт-импульс: A=high есть → этот low = B (или углубляем B)
+        if na(skB) or plPrice <= skB
+            skB := plPrice
+            skBBar := plBar
+            skPullExt := na
+    else if skSide == 1 and not na(skA) and na(skB) and plBar >= skABar and plPrice <= skA
+        // лонг ещё без B: более низкий A
+        skA := plPrice
+        skABar := plBar
+    else if skSide == 1 and not na(skB)
+        // лонг готов — лои отката не сбрасывают
+        skPullExt := na(skPullExt) ? plPrice : math.min(skPullExt, plPrice)
+    else
+        // новый лонг-импульс: A = low
+        skA := plPrice
+        skABar := plBar
+        skB := na
+        skBBar := na
+        skSide := 1
+        skPullExt := na
+
+// инвалидация: закрытие за точку A = импульс сломан (как стоп всей схемы в видео)
+if ok and skSide < 0 and not na(skA) and close > skA
+    skA := na
+    skB := na
+    skABar := na
+    skBBar := na
+    skSide := 0
+    skPullExt := na
+if ok and skSide > 0 and not na(skA) and close < skA
+    skA := na
+    skB := na
+    skABar := na
+    skBBar := na
+    skSide := 0
+    skPullExt := na
+
+// импульс готов только когда A и B подтверждены и размах достаточный
+skRange = not na(skA) and not na(skB) ? math.abs(skA - skB) : na
+skReady = showFib and not na(skRange) and skRange >= fibMinAtr * atrV and not na(skBBar) and bar_index > skBBar
+skDown = skReady and skSide < 0 and skB < skA   // A=high, B=low
+skUp = skReady and skSide > 0 and skB > skA     // A=low, B=high
+
+// уровни: для шорта Fib от A(high)=0 к B(low)=1 → откат вверх: level = A - r*(A-B)
+// для лонга Fib от A(low)=0 к B(high)=1 → откат вниз: level = A + r*(B-A)
+skLevel(r) =>
+    skDown ? skA - r * skRange : skUp ? skA + r * skRange : na
+
+skZ0 = skLevel(fibZoneLo)   // 0.5
+skZ1 = skLevel(fibZoneHi)   // 0.618
+skZoneTop = skDown ? math.max(skZ0, skZ1) : skUp ? math.max(skZ0, skZ1) : na
+skZoneBot = skDown ? math.min(skZ0, skZ1) : skUp ? math.min(skZ0, skZ1) : na
+skExt127 = skLevel(fibTp1)  // 1.272 за B
+skExt161 = skLevel(fibTp2)  // 1.618 за B
+// 1.0 = точка B; для шорта TP ниже B: A - 1.272*(A-B) = B - 0.272*(A-B) ✓
+
+inSkShortZone = skDown and high >= skZoneBot and low <= skZoneTop
+inSkLongZone = skUp and low <= skZoneTop and high >= skZoneBot
+
+// трекаем экстремум отката внутри зоны (для стопа как в видео)
+if skDown and inSkShortZone
+    skPullExt := na(skPullExt) ? high : math.max(skPullExt, high)
+if skUp and inSkLongZone
+    skPullExt := na(skPullExt) ? low : math.min(skPullExt, low)
+
+bodyNow = math.abs(close - open)
+rangeNow = high - low
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+bearPin = rangeNow > 0 and upperWick >= 0.5 * rangeNow and bodyNow <= 0.35 * rangeNow
+bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+bullPin = rangeNow > 0 and lowerWick >= 0.5 * rangeNow and bodyNow <= 0.35 * rangeNow
+bearReversal = bearEngulf or bearPin or (close < open and upperWick >= 0.4 * rangeNow and close <= open - 0.1 * atrV)
+bullReversal = bullEngulf or bullPin or (close > open and lowerWick >= 0.4 * rangeNow and close >= open + 0.1 * atrV)
+
+// точечный режим: SK тоже только по 4h (+ объём если needVol)
+skHtfOkShort = sharpOnly ? htfShort : (not fibNeedHtf or htfShort)
+skHtfOkLong = sharpOnly ? htfLong : (not fibNeedHtf or htfLong)
+skVolOk = not sharpOnly or not needVol or volOk
+// вход: свеча закрылась в зоне + разворот
+fibShortSig = skDown and ok and inSkShortZone and close <= skZoneTop and bearReversal and skHtfOkShort and skVolOk
+fibLongSig = skUp and ok and inSkLongZone and close >= skZoneBot and bullReversal and skHtfOkLong and skVolOk
+
+fibShortStop = skDown ? math.max(nz(skPullExt, high), skZoneTop) + 0.1 * atrV : na
+fibLongStop = skUp ? math.min(nz(skPullExt, low), skZoneBot) - 0.1 * atrV : na
+fibShortTp1 = skExt127
+fibShortTp2 = skExt161
+fibLongTp1 = skExt127
+fibLongTp2 = skExt161
+
+var box fibZoneBox = na
+var array<label> fibLabels = array.new<label>()
+var array<line> fibLines = array.new<line>()
+var array<line> fibRails = array.new<line>()
+var array<label> fibRailLbl = array.new<label>()
+var int lastFibLong = na
+var int lastFibShort = na
+
+fibLongFire = fibLongSig and (na(lastFibLong) or bar_index - lastFibLong >= useCooldown)
+fibShortFire = fibShortSig and (na(lastFibShort) or bar_index - lastFibShort >= useCooldown)
+if fibLongFire
+    lastFibLong := bar_index
+if fibShortFire
+    lastFibShort := bar_index
+
+if fibShortFire and not na(fibShortStop) and fibShortStop - close > 0 and not algoStyle
+    fibTxtS = sharpOnly ? "ВХОДИТЬ ШОРТ\nSK Fib\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(fibShortStop, format.mintick) + "\nтейк " + str.tostring(fibShortTp1, format.mintick) : "SK FIB ШОРТ\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(fibShortStop, format.mintick) + "\nTP1 " + str.tostring(fibShortTp1, format.mintick) + "\nTP2 " + str.tostring(fibShortTp2, format.mintick)
+    array.push(fibLabels, label.new(bar_index, high, fibTxtS, style = label.style_label_down, color = color.new(#F6465D, 0), textcolor = color.white, size = size.normal))
+    array.push(fibLines, line.new(bar_index, fibShortStop, bar_index + 12, fibShortStop, color = #F6465D, style = line.style_dashed, width = 2))
+    array.push(fibLines, line.new(bar_index, fibShortTp1, bar_index + 12, fibShortTp1, color = #0ECB81, style = line.style_dashed, width = 2))
+    if not sharpOnly
+        array.push(fibLines, line.new(bar_index, fibShortTp2, bar_index + 12, fibShortTp2, color = #0ECB81, style = line.style_dashed, width = 1))
+    trimLabels(fibLabels, 1)
+    trimLines(fibLines, sharpOnly ? 2 : 12)
+if fibLongFire and not na(fibLongStop) and close - fibLongStop > 0 and not algoStyle
+    fibTxtL = sharpOnly ? "ВХОДИТЬ ЛОНГ\nSK Fib\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(fibLongStop, format.mintick) + "\nтейк " + str.tostring(fibLongTp1, format.mintick) : "SK FIB ЛОНГ\nвход " + str.tostring(close, format.mintick) + "\nстоп " + str.tostring(fibLongStop, format.mintick) + "\nTP1 " + str.tostring(fibLongTp1, format.mintick) + "\nTP2 " + str.tostring(fibLongTp2, format.mintick)
+    array.push(fibLabels, label.new(bar_index, low, fibTxtL, style = label.style_label_up, color = color.new(#0ECB81, 0), textcolor = color.white, size = size.normal))
+    array.push(fibLines, line.new(bar_index, fibLongStop, bar_index + 12, fibLongStop, color = #F6465D, style = line.style_dashed, width = 2))
+    array.push(fibLines, line.new(bar_index, fibLongTp1, bar_index + 12, fibLongTp1, color = #0ECB81, style = line.style_dashed, width = 2))
+    if not sharpOnly
+        array.push(fibLines, line.new(bar_index, fibLongTp2, bar_index + 12, fibLongTp2, color = #0ECB81, style = line.style_dashed, width = 1))
+    trimLabels(fibLabels, 1)
+    trimLines(fibLines, sharpOnly ? 2 : 12)
+
+fibDownImpulse = skDown
+fibUpImpulse = skUp
+inShortZone = inSkShortZone
+inLongZone = inSkLongZone
+fibShortZoneLo = skZoneBot
+fibShortZoneHi = skZoneTop
+fibLongZoneLo = skZoneBot
+fibLongZoneHi = skZoneTop
+fibHi = skDown ? skA : skUp ? skB : na
+fibLo = skDown ? skB : skUp ? skA : na
+fibRange = skRange
+fibHiBar = skDown ? skABar : skUp ? skBBar : na
+fibLoBar = skDown ? skBBar : skUp ? skABar : na
+
+fibState = "—"
+if barstate.islast
+    while array.size(fibRails) > 0
+        line.delete(array.shift(fibRails))
+    while array.size(fibRailLbl) > 0
+        label.delete(array.shift(fibRailLbl))
+    if not na(fibZoneBox)
+        box.delete(fibZoneBox)
+        fibZoneBox := na
+    if showFib and skDown
+        int x0 = clampBar(skABar)
+        int x1 = bar_index + 4
+        array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
+        array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = #F0B90B, style = line.style_solid, width = 2))
+        array.push(fibRailLbl, label.new(x1, skZ0, str.tostring(fibZoneLo, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
+        array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = #F0B90B, style = line.style_solid, width = 2))
+        array.push(fibRailLbl, label.new(x1, skZ1, str.tostring(fibZoneHi, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
+        array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
+        array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
+        array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
+        array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ШОРТ", text_color = #A78BFA, text_size = size.tiny)
+        fibState := close < skZoneBot ? "ждём откат ↑ в 0.5–0.618" : inSkShortZone ? "в зоне · ждём медв. свечу" : "выше 0.618 · стоп-зона"
+    else if showFib and skUp
+        int x0 = clampBar(skABar)
+        int x1 = bar_index + 4
+        array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
+        array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = #F0B90B, style = line.style_solid, width = 2))
+        array.push(fibRailLbl, label.new(x1, skZ0, str.tostring(fibZoneLo, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
+        array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = #F0B90B, style = line.style_solid, width = 2))
+        array.push(fibRailLbl, label.new(x1, skZ1, str.tostring(fibZoneHi, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
+        array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
+        array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
+        array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
+        array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ЛОНГ", text_color = #A78BFA, text_size = size.tiny)
+        fibState := close > skZoneTop ? "ждём откат ↓ в 0.5–0.618" : inSkLongZone ? "в зоне · ждём быч. свечу" : "ниже 0.618 · стоп-зона"
+    else if showFib
+        fibState := not na(skA) and na(skB) ? (skSide < 0 ? "ждём low импульса ↓" : "ждём high импульса ↑") : "импульса нет"
+    if not modeScalp
+        table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
+
+// ── доп. стратегии: Z146 / Sweep-ретест / EMA / FVG fill / Asian ────────
+// Z146 ZigZag уровни + вход при касании и развороте
+var int zDir = 1
+var float zExt = high
+var int zExtI = 0
+var float zLastP = low
+var int zLastPi = 0
+var float zLvl = na
+var int zLvlSide = 0
+var int zLvlBar = na
+var line zLvlLn = na
+bool zPiv = false
+if useZ146
+    if zDir > 0
+        if high > zExt
+            zExt := high
+            zExtI := bar_index
+        else if zExt - low >= zK * atrV
+            zPiv := true
+    else
+        if low < zExt
+            zExt := low
+            zExtI := bar_index
+        else if high - zExt >= zK * atrV
+            zPiv := true
+    if zPiv
+        float zR = math.abs(zExt - zLastP)
+        if zR >= zX * atrV and (zExtI - zLastPi) <= zBars and zLastPi > 0
+            float zL = zLastP + zDir * zCoef * zR
+            bool zPassed = (zDir > 0 and low <= zL) or (zDir < 0 and high >= zL)
+            if not zPassed
+                zLvl := zL
+                zLvlSide := zDir
+                zLvlBar := bar_index
+                if not modeScalp
+                    if not na(zLvlLn)
+                        line.delete(zLvlLn)
+                    zLvlLn := line.new(bar_index, zL, bar_index + 20, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 2)
+        zLastP := zExt
+        zLastPi := zExtI
+        zDir := -zDir
+        zExt := zDir > 0 ? high : low
+        zExtI := bar_index
+    if modeScalp and not na(zLvlLn)
+        line.delete(zLvlLn)
+        zLvlLn := na
+    else if not na(zLvlLn)
+        line.set_x2(zLvlLn, bar_index + 2)
+
+z146Long = useZ146 and ok and not na(zLvl) and zLvlSide > 0 and low <= zLvl and close > zLvl and close > open and (not needHtf or htfLong) and (not needVol or volOk)
+z146Short = useZ146 and ok and not na(zLvl) and zLvlSide < 0 and high >= zLvl and close < zLvl and close < open and (not needHtf or htfShort) and (not needVol or volOk)
+
+// Sweep + ретест: после снятия ждём возврат к уровню и отбой
+var float sweepLvl = na
+var int sweepSide = 0
+var int sweepBar = na
+if sweepUp
+    sweepLvl := sh1
+    sweepSide := -1
+    sweepBar := bar_index
+if sweepDn
+    sweepLvl := sl1
+    sweepSide := 1
+    sweepBar := bar_index
+sweepRetLong = useSweepRet and ok and sweepSide > 0 and not na(sweepLvl) and not na(sweepBar) and bar_index - sweepBar <= sweepRetBars and bar_index > sweepBar and low <= sweepLvl and close > sweepLvl and close > open and (not needHtf or htfLong) and (not needVol or volOk)
+sweepRetShort = useSweepRet and ok and sweepSide < 0 and not na(sweepLvl) and not na(sweepBar) and bar_index - sweepBar <= sweepRetBars and bar_index > sweepBar and high >= sweepLvl and close < sweepLvl and close < open and (not needHtf or htfShort) and (not needVol or volOk)
+
+// EMA откат: касание EMA fast по тренду 4h + закрытие обратно
+emaTouchLong = useEmaPb and ok and htfLong and low <= emaF and close > emaF and close > open and (not needVol or volOk)
+emaTouchShort = useEmaPb and ok and htfShort and high >= emaF and close < emaF and close < open and (not needVol or volOk)
+
+// FVG fill: цена зашла в FVG и закрылась в сторону тренда
+fvgFillLong = useFvgFill and ok and inBullFvg and htfLong and close > open and (not needVol or volOk)
+fvgFillShort = useFvgFill and ok and inBearFvg and htfShort and close < open and (not needVol or volOk)
+
+// Asian range UTC 0–8 → пробой после 8:00
+asiaHour = hour(time, "UTC")
+inAsia = asiaHour >= 0 and asiaHour < 8
+var float asiaHi = na
+var float asiaLo = na
+var int asiaDay = na
+curDay = dayofmonth(time, "UTC")
+if na(asiaDay) or curDay != asiaDay
+    asiaDay := curDay
+    asiaHi := na
+    asiaLo := na
+if inAsia
+    asiaHi := na(asiaHi) ? high : math.max(asiaHi, high)
+    asiaLo := na(asiaLo) ? low : math.min(asiaLo, low)
+asiaLong = useAsia and ok and not inAsia and not na(asiaHi) and not na(asiaLo) and asiaHi > asiaLo and close > asiaHi and close[1] <= asiaHi and (not needHtf or htfLong) and (not needVol or volOk)
+asiaShort = useAsia and ok and not inAsia and not na(asiaHi) and not na(asiaLo) and asiaHi > asiaLo and close < asiaLo and close[1] >= asiaLo and (not needHtf or htfShort) and (not needVol or volOk)
+
+var int lastExtraLong = na
+var int lastExtraShort = na
+extraLongRaw = z146Long or sweepRetLong or emaTouchLong or fvgFillLong or asiaLong
+extraShortRaw = z146Short or sweepRetShort or emaTouchShort or fvgFillShort or asiaShort
+extraLongFire = extraLongRaw and (na(lastExtraLong) or bar_index - lastExtraLong >= useCooldown)
+extraShortFire = extraShortRaw and (na(lastExtraShort) or bar_index - lastExtraShort >= useCooldown)
+if extraLongFire
+    lastExtraLong := bar_index
+if extraShortFire
+    lastExtraShort := bar_index
+
+extraLongName = z146Long ? "Z146" : sweepRetLong ? "Sweep ретест" : emaTouchLong ? "EMA откат" : fvgFillLong ? "FVG fill" : asiaLong ? "Asian break" : "extra"
+extraShortName = z146Short ? "Z146" : sweepRetShort ? "Sweep ретест" : emaTouchShort ? "EMA откат" : fvgFillShort ? "FVG fill" : asiaShort ? "Asian break" : "extra"
+extraLongStop = math.min(low, low[1]) - 0.1 * atrV
+extraShortStop = math.max(high, high[1]) + 0.1 * atrV
+extraLongRisk = close - extraLongStop
+extraShortRisk = extraShortStop - close
+extraLongTp = extraLongRisk > 0 ? close + rr * extraLongRisk : na
+extraShortTp = extraShortRisk > 0 ? close - rr * extraShortRisk : na
+
+// ── карточка «План входа» — только выбранный движок ───────────────────
+var table plan = table.new(position.bottom_right, 2, 11, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+var bool algoBusy = false
+int planSide = 0
+string planName = "—"
+float planEntry = na
+float planStop = na
+float planTp = na
+float planTp2 = na
+bool planEnter = false
+allowFib = modeSk or modeAll
+allowSmc = modeSmc or modeAll or modeScalp
+// скальп: EMA + sweep-ретест + ретест структуры; без Asia/Z146
+allowExtra = modeAll
+allowSmcExtra = (modeSmc or modeScalp) and (sweepRetLong or sweepRetShort or emaTouchLong or emaTouchShort)
+if allowFib and fibShortFire and fibShortStop - close > 0
+    planSide := -1
+    planName := "SK Fib шорт"
+    planEntry := close
+    planStop := fibShortStop
+    planTp := fibShortTp1
+    planTp2 := fibShortTp2
+    planEnter := true
+else if allowFib and fibLongFire and close - fibLongStop > 0
+    planSide := 1
+    planName := "SK Fib лонг"
+    planEntry := close
+    planStop := fibLongStop
+    planTp := fibLongTp1
+    planTp2 := fibLongTp2
+    planEnter := true
+else if allowSmc and longFire and not na(longRisk) and longRisk > 0
+    planSide := 1
+    planName := figLong
+    planEntry := close
+    planStop := longStop
+    planTp := longTp
+    planEnter := true
+else if allowSmc and shortFire and not na(shortRisk) and shortRisk > 0
+    planSide := -1
+    planName := figShort
+    planEntry := close
+    planStop := shortStop
+    planTp := shortTp
+    planEnter := true
+else if (allowExtra or allowSmcExtra and (emaTouchLong or sweepRetLong)) and extraLongFire and extraLongRisk > 0 and not na(extraLongTp) and (modeAll or emaTouchLong or sweepRetLong)
+    planSide := 1
+    planName := extraLongName
+    planEntry := close
+    planStop := extraLongStop
+    planTp := extraLongTp
+    planEnter := true
+else if (allowExtra or allowSmcExtra and (emaTouchShort or sweepRetShort)) and extraShortFire and extraShortRisk > 0 and not na(extraShortTp) and (modeAll or emaTouchShort or sweepRetShort)
+    planSide := -1
+    planName := extraShortName
+    planEntry := close
+    planStop := extraShortStop
+    planTp := extraShortTp
+    planEnter := true
+
+// одна сделка: не перебиваем открытый алго-трейд
+if planEnter and oneTrade and algoStyle and algoBusy
+    planEnter := false
+
+var int planSideKeep = 0
+var string planNameKeep = "—"
+var float planEntryKeep = na
+var float planStopKeep = na
+var float planTpKeep = na
+var float planTp2Keep = na
+var float planTp3Keep = na
+var int planBarKeep = na
+if planEnter
+    float rPlan = math.abs(planEntry - planStop)
+    // скальп всегда считает тейки в R от стопа (быстрые 0.5/1/1.5), не фибо-экстеншены
+    float tp1Fill = modeScalp or na(planTp) ? (planSide > 0 ? planEntry + useTp1R * rPlan : planEntry - useTp1R * rPlan) : planTp
+    float tp2Fill = modeScalp or na(planTp2) ? (planSide > 0 ? planEntry + useTp2R * rPlan : planEntry - useTp2R * rPlan) : planTp2
+    float tp3Fill = planSide > 0 ? planEntry + useTp3R * rPlan : planEntry - useTp3R * rPlan
+    planSideKeep := planSide
+    planNameKeep := planName
+    planEntryKeep := planEntry
+    planStopKeep := planStop
+    planTpKeep := tp1Fill
+    planTp2Keep := tp2Fill
+    planTp3Keep := tp3Fill
+    planBarKeep := bar_index
+    planTp := tp1Fill
+    planTp2 := tp2Fill
+
+// ── чистый алго-вид: 1 активная сделка = SL + TP1/TP2/TP3; история = мелкие ▲/▼ ──
+var table algoDash = table.new(position.top_left, 2, 8, bgcolor = color.new(#11141A, 10), border_width = 1, border_color = #2B3139)
+var array<label> histLbl = array.new<label>()
+var array<int> tSide = array.new<int>()
+var array<float> tEntry = array.new<float>()
+var array<float> tStop = array.new<float>()
+var array<float> tTp1 = array.new<float>()
+var array<float> tTp2 = array.new<float>()
+var array<float> tTp3 = array.new<float>()
+var array<int> tBar = array.new<int>()
+var array<bool> tOpen = array.new<bool>()
+var array<string> tName = array.new<string>()
+var array<int> tHitTp = array.new<int>()
+var box actSl = na
+var box actTpZone = na
+var line actEntry = na
+var line actTp1 = na
+var line actTp2 = na
+var line actTp3 = na
+var label actTp1L = na
+var label actTp2L = na
+var label actTp3L = na
+var label actSlL = na
+var label actBuySell = na
+var int actIdx = na
+var int algoTrades = 0
+var int algoTp = 0
+var int algoSl = 0
+var int algoTime = 0
+var string lastTradeRes = "—"
+var string lastTradeName = "—"
+
+if algoStyle and planEnter
+    if not na(actSl)
+        box.delete(actSl)
+    if not na(actTpZone)
+        box.delete(actTpZone)
+    if not na(actEntry)
+        line.delete(actEntry)
+    if not na(actTp1)
+        line.delete(actTp1)
+    if not na(actTp2)
+        line.delete(actTp2)
+    if not na(actTp3)
+        line.delete(actTp3)
+    if not na(actTp1L)
+        label.delete(actTp1L)
+    if not na(actTp2L)
+        label.delete(actTp2L)
+    if not na(actTp3L)
+        label.delete(actTp3L)
+    if not na(actSlL)
+        label.delete(actSlL)
+    if not na(actBuySell)
+        label.delete(actBuySell)
+    actSl := na
+    actTpZone := na
+    actEntry := na
+    actTp1 := na
+    actTp2 := na
+    actTp3 := na
+    actTp1L := na
+    actTp2L := na
+    actTp3L := na
+    actSlL := na
+    actBuySell := na
+
+    float p1 = planTpKeep
+    float p2 = planTp2Keep
+    float p3 = planTp3Keep
+
+    while array.size(tOpen) >= maxHistTrades
+        label.delete(array.shift(histLbl))
+        array.shift(tSide)
+        array.shift(tEntry)
+        array.shift(tStop)
+        array.shift(tTp1)
+        array.shift(tTp2)
+        array.shift(tTp3)
+        array.shift(tBar)
+        array.shift(tOpen)
+        array.shift(tName)
+        array.shift(tHitTp)
+        if not na(actIdx)
+            actIdx := actIdx - 1
+
+    label hL = na
+    if planSide > 0
+        hL := label.new(bar_index, low, "▲", style = label.style_label_up, color = #00E676, textcolor = color.black, size = size.tiny)
+    else
+        hL := label.new(bar_index, high, "▼", style = label.style_label_down, color = #FF1744, textcolor = color.white, size = size.tiny)
+    array.push(histLbl, hL)
+    array.push(tSide, planSide)
+    array.push(tEntry, planEntry)
+    array.push(tStop, planStop)
+    array.push(tTp1, p1)
+    array.push(tTp2, p2)
+    array.push(tTp3, p3)
+    array.push(tBar, bar_index)
+    array.push(tOpen, true)
+    array.push(tName, planName)
+    array.push(tHitTp, 0)
+    actIdx := array.size(tOpen) - 1
+    algoBusy := true
+    algoTrades += 1
+    lastTradeName := planName
+    lastTradeRes := "open"
+
+    int xR = bar_index + useHorizon
+    if planSide > 0
+        actBuySell := label.new(bar_index, low, modeScalp ? "BUY SCALP" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.large)
+    else
+        actBuySell := label.new(bar_index, high, modeScalp ? "SELL SCALP" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.large)
+    if planSide > 0
+        actSl := box.new(bar_index, planEntry, xR, planStop, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
+        actTpZone := box.new(bar_index, p3, xR, planEntry, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
+    else
+        actSl := box.new(bar_index, planStop, xR, planEntry, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
+        actTpZone := box.new(bar_index, planEntry, xR, p3, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
+    actEntry := line.new(bar_index, planEntry, xR, planEntry, color = color.white, style = line.style_solid, width = 2)
+    actTp1 := line.new(bar_index, p1, xR, p1, color = #00E676, style = line.style_solid, width = 2)
+    actTp2 := line.new(bar_index, p2, xR, p2, color = #69F0AE, style = line.style_dashed, width = 2)
+    actTp3 := line.new(bar_index, p3, xR, p3, color = #B9F6CA, style = line.style_dotted, width = 2)
+    actTp1L := label.new(xR, p1, "TP1 +" + str.tostring(levPct(planEntry, p1), "#.#") + "% x" + str.tostring(leverage, "#") + "\n" + str.tostring(p1, format.mintick) + " · " + fmtMin(etaMinutes(planEntry, p1, atrV)), style = label.style_label_left, color = color.new(#00E676, 20), textcolor = #00E676, size = size.small)
+    actTp2L := label.new(xR, p2, "TP2 +" + str.tostring(levPct(planEntry, p2), "#.#") + "%\n" + str.tostring(p2, format.mintick) + " · " + fmtMin(etaMinutes(planEntry, p2, atrV)), style = label.style_label_left, color = color.new(#69F0AE, 30), textcolor = #69F0AE, size = size.small)
+    actTp3L := label.new(xR, p3, "TP3 +" + str.tostring(levPct(planEntry, p3), "#.#") + "%\n" + str.tostring(p3, format.mintick), style = label.style_label_left, color = color.new(#B9F6CA, 40), textcolor = #B9F6CA, size = size.small)
+    actSlL := label.new(xR, planStop, "SL −" + str.tostring(levPct(planEntry, planStop), "#.#") + "% маржа\n" + str.tostring(planStop, format.mintick), style = label.style_label_left, color = color.new(#FF1744, 20), textcolor = #FF1744, size = size.small)
+
+if algoStyle and array.size(tOpen) > 0
+    for i = 0 to array.size(tOpen) - 1
+        if array.get(tOpen, i)
+            int sideI = array.get(tSide, i)
+            float eI = array.get(tEntry, i)
+            float sI = array.get(tStop, i)
+            float p1I = array.get(tTp1, i)
+            float p2I = array.get(tTp2, i)
+            float p3I = array.get(tTp3, i)
+            int bI = array.get(tBar, i)
+            int hitTp = array.get(tHitTp, i)
+            if bar_index > bI
+                if sideI > 0
+                    if hitTp < 1 and high >= p1I
+                        array.set(tHitTp, i, 1)
+                        hitTp := 1
+                        // после TP1 — стоп в безубыток (скальп PEPE-логика)
+                        if beAfterTp1 and sI < eI
+                            array.set(tStop, i, eI)
+                            sI := eI
+                            if not na(actIdx) and i == actIdx
+                                if not na(actSl)
+                                    box.set_bottom(actSl, eI)
+                                if not na(actSlL)
+                                    label.set_y(actSlL, eI)
+                                    label.set_text(actSlL, "SL BE  " + str.tostring(eI, format.mintick))
+                    if hitTp < 2 and high >= p2I
+                        array.set(tHitTp, i, 2)
+                        hitTp := 2
+                    if hitTp < 3 and high >= p3I
+                        array.set(tHitTp, i, 3)
+                        hitTp := 3
+                    bool scalpDoneL = modeScalp and closeAtTp2 and hitTp >= 2
+                    if low <= sI
+                        array.set(tOpen, i, false)
+                        lastTradeRes := hitTp > 0 ? (sI >= eI ? "TP" + str.tostring(hitTp) + " BE" : "TP" + str.tostring(hitTp) + "→SL") : "SL"
+                        if hitTp == 0
+                            algoSl += 1
+                        else
+                            algoTp += 1
+                        lastTradeName := array.get(tName, i)
+                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▲ TP" + str.tostring(hitTp) : "▲ SL")
+                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #FF1744)
+                        if not na(actIdx) and i == actIdx and not na(actBuySell)
+                            label.set_text(actBuySell, hitTp > 0 ? "BUY · TP" + str.tostring(hitTp) : "BUY · SL")
+                            label.set_color(actBuySell, hitTp > 0 ? #00E676 : #FF1744)
+                    else if scalpDoneL or hitTp >= 3 or bar_index - bI >= useHorizon
+                        array.set(tOpen, i, false)
+                        lastTradeRes := hitTp > 0 ? "TP" + str.tostring(hitTp) : "time"
+                        if hitTp > 0
+                            algoTp += 1
+                        else
+                            algoTime += 1
+                        lastTradeName := array.get(tName, i)
+                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▲ TP" + str.tostring(hitTp) : "▲ ·")
+                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #848E9C)
+                        if not na(actIdx) and i == actIdx and not na(actBuySell)
+                            label.set_text(actBuySell, hitTp > 0 ? "BUY · TP" + str.tostring(hitTp) : "BUY · time")
+                else
+                    if hitTp < 1 and low <= p1I
+                        array.set(tHitTp, i, 1)
+                        hitTp := 1
+                        if beAfterTp1 and sI > eI
+                            array.set(tStop, i, eI)
+                            sI := eI
+                            if not na(actIdx) and i == actIdx
+                                if not na(actSl)
+                                    box.set_top(actSl, eI)
+                                if not na(actSlL)
+                                    label.set_y(actSlL, eI)
+                                    label.set_text(actSlL, "SL BE  " + str.tostring(eI, format.mintick))
+                    if hitTp < 2 and low <= p2I
+                        array.set(tHitTp, i, 2)
+                        hitTp := 2
+                    if hitTp < 3 and low <= p3I
+                        array.set(tHitTp, i, 3)
+                        hitTp := 3
+                    bool scalpDoneS = modeScalp and closeAtTp2 and hitTp >= 2
+                    if high >= sI
+                        array.set(tOpen, i, false)
+                        lastTradeRes := hitTp > 0 ? (sI <= eI ? "TP" + str.tostring(hitTp) + " BE" : "TP" + str.tostring(hitTp) + "→SL") : "SL"
+                        if hitTp == 0
+                            algoSl += 1
+                        else
+                            algoTp += 1
+                        lastTradeName := array.get(tName, i)
+                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▼ TP" + str.tostring(hitTp) : "▼ SL")
+                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #FF1744)
+                        if not na(actIdx) and i == actIdx and not na(actBuySell)
+                            label.set_text(actBuySell, hitTp > 0 ? "SELL · TP" + str.tostring(hitTp) : "SELL · SL")
+                            label.set_color(actBuySell, hitTp > 0 ? #00E676 : #FF1744)
+                    else if scalpDoneS or hitTp >= 3 or bar_index - bI >= useHorizon
+                        array.set(tOpen, i, false)
+                        lastTradeRes := hitTp > 0 ? "TP" + str.tostring(hitTp) : "time"
+                        if hitTp > 0
+                            algoTp += 1
+                        else
+                            algoTime += 1
+                        lastTradeName := array.get(tName, i)
+                        label.set_text(array.get(histLbl, i), hitTp > 0 ? "▼ TP" + str.tostring(hitTp) : "▼ ·")
+                        label.set_color(array.get(histLbl, i), hitTp > 0 ? #00E676 : #848E9C)
+                        if not na(actIdx) and i == actIdx and not na(actBuySell)
+                            label.set_text(actBuySell, hitTp > 0 ? "SELL · TP" + str.tostring(hitTp) : "SELL · time")
+
+    // тянем только АКТИВНУЮ коробку
+    if not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
+        algoBusy := true
+        int xr = bar_index + 3
+        if not na(actSl)
+            box.set_right(actSl, xr)
+        if not na(actTpZone)
+            box.set_right(actTpZone, xr)
+        if not na(actEntry)
+            line.set_x2(actEntry, xr)
+        if not na(actTp1)
+            line.set_x2(actTp1, xr)
+        if not na(actTp2)
+            line.set_x2(actTp2, xr)
+        if not na(actTp3)
+            line.set_x2(actTp3, xr)
+        if not na(actTp1L)
+            label.set_x(actTp1L, xr)
+        if not na(actTp2L)
+            label.set_x(actTp2L, xr)
+        if not na(actTp3L)
+            label.set_x(actTp3L, xr)
+        if not na(actSlL)
+            label.set_x(actSlL, xr)
+    else if not na(actIdx) and actIdx < array.size(tOpen) and not array.get(tOpen, actIdx)
+        algoBusy := false
+        // скальп: сразу убрать коробки после TP/SL — не оставлять BUY·SL на экране
+        if modeScalp
+            if not na(actSl)
+                box.delete(actSl)
+            if not na(actTpZone)
+                box.delete(actTpZone)
+            if not na(actEntry)
+                line.delete(actEntry)
+            if not na(actTp1)
+                line.delete(actTp1)
+            if not na(actTp2)
+                line.delete(actTp2)
+            if not na(actTp3)
+                line.delete(actTp3)
+            if not na(actTp1L)
+                label.delete(actTp1L)
+            if not na(actTp2L)
+                label.delete(actTp2L)
+            if not na(actTp3L)
+                label.delete(actTp3L)
+            if not na(actSlL)
+                label.delete(actSlL)
+            if not na(actBuySell)
+                label.delete(actBuySell)
+            actSl := na
+            actTpZone := na
+            actEntry := na
+            actTp1 := na
+            actTp2 := na
+            actTp3 := na
+            actTp1L := na
+            actTp2L := na
+            actTp3L := na
+            actSlL := na
+            actBuySell := na
+        else
+            if not na(actSl)
+                box.set_right(actSl, bar_index)
+            if not na(actTpZone)
+                box.set_right(actTpZone, bar_index)
+    else
+        algoBusy := false
+
+if algoStyle and barstate.islast
+    bool openNow = not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
+    winRate = algoTrades > 0 ? algoTp / algoTrades * 100 : 0.0
+    stopRate = algoTrades > 0 ? algoSl / algoTrades * 100 : 0.0
+    table.cell(algoDash, 0, 0, "65 ALGO", text_color = #F0B90B, text_size = size.normal)
+    table.cell(algoDash, 1, 0, openNow ? (array.get(tSide, actIdx) > 0 ? "LONG" : "SHORT") : "READY", text_color = openNow ? (array.get(tSide, actIdx) > 0 ? #00E676 : #FF1744) : #EAECEF, text_size = size.large)
+    table.cell(algoDash, 0, 1, "Setup", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 1, openNow ? array.get(tName, actIdx) : (not na(planBarKeep) and bar_index - planBarKeep <= signalBars ? planNameKeep : "—"), text_color = #EAECEF, text_size = size.small)
+    table.cell(algoDash, 0, 2, "Entry", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 2, openNow ? str.tostring(array.get(tEntry, actIdx), format.mintick) : "—", text_color = color.white, text_size = size.normal)
+    table.cell(algoDash, 0, 3, "SL", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 3, openNow ? str.tostring(array.get(tStop, actIdx), format.mintick) : "—", text_color = #FF1744, text_size = size.normal)
+    table.cell(algoDash, 0, 4, "TP1 / TP2 / TP3", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 4, openNow ? str.tostring(array.get(tTp1, actIdx), format.mintick) + " / " + str.tostring(array.get(tTp2, actIdx), format.mintick) + " / " + str.tostring(array.get(tTp3, actIdx), format.mintick) : "—", text_color = #00E676, text_size = size.tiny)
+    table.cell(algoDash, 0, 5, "Trades", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 5, str.tostring(algoTrades) + " · TP " + str.tostring(algoTp) + " · SL " + str.tostring(algoSl), text_color = #EAECEF, text_size = size.small)
+    table.cell(algoDash, 0, 6, "TP% / SL%", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 6, str.tostring(winRate, "#.#") + "% / " + str.tostring(stopRate, "#.#") + "%", text_color = winRate >= stopRate ? #00E676 : #FF1744, text_size = size.small)
+    table.cell(algoDash, 0, 7, "Last", text_color = #848E9C, text_size = size.small)
+    table.cell(algoDash, 1, 7, lastTradeName + " · " + lastTradeRes, text_color = str.contains(lastTradeRes, "TP") ? #00E676 : lastTradeRes == "SL" ? #FF1744 : #848E9C, text_size = size.tiny)
+
+if barstate.islast and showPlan
+    fresh = not na(planBarKeep) and bar_index - planBarKeep <= (modeScalp ? math.max(signalBars, 8) : signalBars)
+    waitWhy = modeScalp ? waiting : (showFib and (skDown or skUp) ? fibState : waiting)
+    bool inTradeNow = algoStyle and algoBusy and not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
+    if sharpOnly
+        if inTradeNow or (fresh and planSideKeep != 0)
+            float eShow = inTradeNow ? array.get(tEntry, actIdx) : planEntryKeep
+            float sShow = inTradeNow ? array.get(tStop, actIdx) : planStopKeep
+            float t1Show = inTradeNow ? array.get(tTp1, actIdx) : planTpKeep
+            float t2Show = inTradeNow ? array.get(tTp2, actIdx) : planTp2Keep
+            float t3Show = inTradeNow ? array.get(tTp3, actIdx) : planTp3Keep
+            int sideShow = inTradeNow ? array.get(tSide, actIdx) : planSideKeep
+            string nameShow = inTradeNow ? array.get(tName, actIdx) : planNameKeep
+            string headShow = inTradeNow ? (sideShow > 0 ? "В СДЕЛКЕ LONG" : "В СДЕЛКЕ SHORT") : (modeScalp ? (sideShow > 0 ? "BUY SCALP" : "SELL SCALP") : (sideShow > 0 ? (algoStyle ? "BUY / ЛОНГ" : "ВХОДИТЬ ЛОНГ") : (algoStyle ? "SELL / ШОРТ" : "ВХОДИТЬ ШОРТ")))
+            color headCol = sideShow > 0 ? #0ECB81 : #F6465D
+            table.cell(plan, 0, 0, "КОМАНДА", text_color = headCol, text_size = size.normal)
+            table.cell(plan, 1, 0, headShow, text_color = headCol, text_size = size.large)
+            table.cell(plan, 0, 1, "Почему", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 1, nameShow + " · x" + str.tostring(leverage, "#"), text_color = #EAECEF, text_size = size.small)
+            table.cell(plan, 0, 2, "Вход", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 2, str.tostring(eShow, format.mintick), text_color = #EAECEF, text_size = size.normal)
+            table.cell(plan, 0, 3, "Стоп", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 3, fmtSlLine(eShow, sShow), text_color = #F6465D, text_size = size.tiny)
+            table.cell(plan, 0, 4, "TP1", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 4, fmtTpLine(eShow, t1Show), text_color = #00E676, text_size = size.tiny)
+            table.cell(plan, 0, 5, "TP2", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 5, fmtTpLine(eShow, t2Show), text_color = #69F0AE, text_size = size.tiny)
+            table.cell(plan, 0, 6, "TP3", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 6, fmtTpLine(eShow, t3Show), text_color = #B9F6CA, text_size = size.tiny)
+            table.cell(plan, 0, 7, "~время", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 7, fmtEtaLine(eShow, t1Show, t2Show, atrV), text_color = #F0B90B, text_size = size.tiny)
+            table.cell(plan, 0, 8, "Риск x" + str.tostring(leverage, "#"), text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 8, "−" + str.tostring(levPct(eShow, sShow), "#.#") + "% маржа если SL", text_color = #F6465D, text_size = size.tiny)
+            table.cell(plan, 0, 9, "Цель TP1", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 9, "+" + str.tostring(levPct(eShow, t1Show), "#.#") + "% маржа · цена +" + str.tostring(pxPct(eShow, t1Show), "#.##") + "%", text_color = #00E676, text_size = size.tiny)
+            table.cell(plan, 0, 10, inTradeNow ? "TP hit" : "Свечей", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 10, inTradeNow ? str.tostring(array.get(tHitTp, actIdx)) : str.tostring(bar_index - planBarKeep) + " / " + str.tostring(modeScalp ? math.max(signalBars, 8) : signalBars), text_color = #F0B90B, text_size = size.small)
+        else
+            table.cell(plan, 0, 0, "КОМАНДА", text_color = #848E9C, text_size = size.normal)
+            table.cell(plan, 1, 0, "НЕ ВХОДИТЬ", text_color = #848E9C, text_size = size.large)
+            table.cell(plan, 0, 1, modeScalp ? "15m" : "4h", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 1, word(modeScalp ? trend15 : trend4h), text_color = col(modeScalp ? trend15 : trend4h), text_size = size.small)
+            table.cell(plan, 0, 2, "Плечо", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 2, "x" + str.tostring(leverage, "#"), text_color = #EAECEF, text_size = size.small)
+            table.cell(plan, 0, 3, "Вход", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 3, "—", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 0, 4, "Стоп", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 4, "—", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 0, 5, "TP1", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 5, "—", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 0, 6, "TP2", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 6, "—", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 0, 7, "TP3", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 7, "—", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 0, 8, "~время", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 8, "—", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 0, 9, "Last", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 9, lastTradeRes, text_color = str.contains(lastTradeRes, "TP") ? #00E676 : lastTradeRes == "SL" ? #FF1744 : #848E9C, text_size = size.small)
+            table.cell(plan, 0, 10, "Ждём", text_color = #848E9C, text_size = size.small)
+            table.cell(plan, 1, 10, waitWhy, text_color = #F0B90B, text_size = size.tiny)
+    else
+        // старый подробный режим (ожидание с цифрами)
+        int liveSide = 0
+        string liveName = "—"
+        string liveWhy = waiting
+        float liveEntry = na
+        float liveStop = na
+        float liveTp = na
+        float liveTp2 = na
+        if showFib and skDown
+            liveSide := -1
+            liveName := "SK Fib шорт"
+            liveEntry := skZ1
+            liveStop := math.max(nz(skPullExt, skZoneTop), skZoneTop) + 0.1 * atrV
+            liveTp := fibShortTp1
+            liveTp2 := fibShortTp2
+            liveWhy := fibState
+        else if showFib and skUp
+            liveSide := 1
+            liveName := "SK Fib лонг"
+            liveEntry := skZ1
+            liveStop := math.min(nz(skPullExt, skZoneBot), skZoneBot) - 0.1 * atrV
+            liveTp := fibLongTp1
+            liveTp2 := fibLongTp2
+            liveWhy := fibState
+        else if waitDblDn and not na(neckH) and not na(extH)
+            liveSide := -1
+            liveName := "двойная вершина"
+            liveEntry := neckH
+            liveStop := extH + 0.1 * atrV
+            liveTp := neckH - rr * (liveStop - neckH)
+            liveWhy := "ждём пробой шеи ↓"
+        else if waitDblUp and not na(neckL) and not na(extL)
+            liveSide := 1
+            liveName := "двойное дно"
+            liveEntry := neckL
+            liveStop := extL - 0.1 * atrV
+            liveTp := neckL + rr * (neckL - liveStop)
+            liveWhy := "ждём пробой шеи ↑"
+        else if inSqueeze
+            liveSide := trend4h >= 0 ? 1 : -1
+            liveName := "пробой сжатия"
+            liveEntry := trend4h >= 0 ? sqHigh : sqLow
+            liveStop := trend4h >= 0 ? sqLow - 0.1 * atrV : sqHigh + 0.1 * atrV
+            liveTp := liveEntry + liveSide * rr * math.abs(liveEntry - liveStop)
+            liveWhy := "ждём пробой сжатия"
+
+        useSide = fresh ? planSideKeep : liveSide
+        useName = fresh ? planNameKeep : liveName
+        useEntry = fresh ? planEntryKeep : liveEntry
+        useStop = fresh ? planStopKeep : liveStop
+        useTp = fresh ? planTpKeep : liveTp
+        useTp2 = fresh ? planTp2Keep : liveTp2
+        useWhy = fresh ? "сигнал · " + str.tostring(bar_index - planBarKeep) + " св. назад" : liveWhy
+        hasPlan = useSide != 0 and not na(useEntry) and not na(useStop) and not na(useTp)
+
+        headC = fresh ? (useSide > 0 ? #0ECB81 : #F6465D) : hasPlan ? #F0B90B : #848E9C
+        table.cell(plan, 0, 0, fresh ? (useSide > 0 ? "ПЛАН: ЛОНГ" : "ПЛАН: ШОРТ") : hasPlan ? (useSide > 0 ? "ЖДЁМ ЛОНГ" : "ЖДЁМ ШОРТ") : "ПЛАН ВХОДА", text_color = headC, text_size = size.small)
+        table.cell(plan, 1, 0, hasPlan ? useName : "сценария нет", text_color = headC, text_size = size.small)
+        table.cell(plan, 0, 1, "Действие", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 1, fresh ? "ВХОДИТЬ СЕЙЧАС" : hasPlan ? "ЖДАТЬ ТРИГГЕР" : "—", text_color = fresh ? #0ECB81 : #F0B90B, text_size = size.small)
+        table.cell(plan, 0, 2, "Вход", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 2, hasPlan ? str.tostring(useEntry, format.mintick) : "—", text_color = #EAECEF, text_size = size.small)
+        table.cell(plan, 0, 3, "Стоп", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 3, hasPlan ? str.tostring(useStop, format.mintick) : "—", text_color = #F6465D, text_size = size.small)
+        table.cell(plan, 0, 4, "Тейк 1", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 4, hasPlan ? str.tostring(useTp, format.mintick) : "—", text_color = #0ECB81, text_size = size.small)
+        table.cell(plan, 0, 5, "Тейк 2", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 5, hasPlan and not na(useTp2) ? str.tostring(useTp2, format.mintick) : "—", text_color = #0ECB81, text_size = size.small)
+        riskAbs = hasPlan ? math.abs(useEntry - useStop) : na
+        rrVal = hasPlan and not na(riskAbs) and riskAbs > 0 ? math.abs(useTp - useEntry) / riskAbs : na
+        table.cell(plan, 0, 6, "R:R / стоп %", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 6, hasPlan and not na(rrVal) ? str.tostring(rrVal, "#.#") + "R · " + str.tostring(riskAbs / useEntry * 100, "#.##") + "%" : "—", text_color = #EAECEF, text_size = size.small)
+        table.cell(plan, 0, 7, "Статус", text_color = #848E9C, text_size = size.small)
+        table.cell(plan, 1, 7, useWhy, text_color = #F0B90B, text_size = size.tiny)
+
+// ── потенциальная свеча (призрак справа) ────────────────────────────────
+var box ghostBody = na
+var line ghostWick = na
+var label ghostLbl = na
+var float lastEntryLongStop = na
+var float lastEntryLongTp = na
+var float lastEntryShortStop = na
+var float lastEntryShortTp = na
+
+if longFire and not na(longStop) and not na(longTp)
+    lastEntryLongStop := longStop
+    lastEntryLongTp := longTp
+if shortFire and not na(shortStop) and not na(shortTp)
+    lastEntryShortStop := shortStop
+    lastEntryShortTp := shortTp
+
+waitBull = inSqueeze and htfLong or waitDblUp
+waitBear = inSqueeze and htfShort or waitDblDn
+entryBull = not na(lastLong) and bar_index - lastLong <= 3 and not na(lastEntryLongTp) and not na(lastEntryLongStop)
+entryBear = not na(lastShort) and bar_index - lastShort <= 3 and not na(lastEntryShortTp) and not na(lastEntryShortStop)
+
+if barstate.islast
+    if not na(ghostBody)
+        box.delete(ghostBody)
+    if not na(ghostWick)
+        line.delete(ghostWick)
+    if not na(ghostLbl)
+        label.delete(ghostLbl)
+    ghostBody := na
+    ghostWick := na
+    ghostLbl := na
+
+    if showGhost
+        float gO = na
+        float gH = na
+        float gL = na
+        float gC = na
+        bool gBull = false
+        string gTxt = ""
+        if entryBull
+            gO := close
+            gC := close + (lastEntryLongTp - close) * 0.5
+            gH := lastEntryLongTp
+            gL := lastEntryLongStop
+            gBull := true
+            gTxt := "потенц. ↑\nк цели / стоп"
+        else if entryBear
+            gO := close
+            gC := close - (close - lastEntryShortTp) * 0.5
+            gH := lastEntryShortStop
+            gL := lastEntryShortTp
+            gBull := false
+            gTxt := "потенц. ↓\nк цели / стоп"
+        else if waitBull
+            gO := close
+            gC := close + 0.9 * atrV
+            gH := close + 1.3 * atrV
+            gL := close - 0.35 * atrV
+            gBull := true
+            gTxt := "потенц. свеча\n" + (waitDblUp ? "ждём пробой шеи ↑" : "ждём пробой сжатия ↑")
+        else if waitBear
+            gO := close
+            gC := close - 0.9 * atrV
+            gH := close + 0.35 * atrV
+            gL := close - 1.3 * atrV
+            gBull := false
+            gTxt := "потенц. свеча\n" + (waitDblDn ? "ждём пробой шеи ↓" : "ждём пробой сжатия ↓")
+
+        if not na(gO)
+            int x0 = bar_index + 1
+            int x1 = bar_index + 2
+            float bodyTop = math.max(gO, gC)
+            float bodyBot = math.min(gO, gC)
+            color fillC = gBull ? color.new(#0ECB81, 55) : color.new(#F6465D, 55)
+            color edgeC = gBull ? #0ECB81 : #F6465D
+            ghostWick := line.new(x0, gH, x0, gL, color = edgeC, width = 2)
+            ghostBody := box.new(x0, bodyTop, x1, bodyBot, border_color = edgeC, bgcolor = fillC, border_width = 2, text = "?", text_color = edgeC, text_size = size.tiny)
+            ghostLbl := label.new(x1, gBull ? gH : gL, gTxt, style = gBull ? label.style_label_up : label.style_label_down, color = color.new(edgeC, 20), textcolor = color.white, size = size.small)
+
+alertcondition(longFire, "Potential long", "65 SMC: potential long")
+alertcondition(shortFire, "Potential short", "65 SMC: potential short")
+alertcondition(fibLongFire, "SK Fib long", "65 SK Fib: long setup")
+alertcondition(fibShortFire, "SK Fib short", "65 SK Fib: short setup")
+alertcondition(extraLongFire, "Extra long", "65 extra: long")
+alertcondition(extraShortFire, "Extra short", "65 extra: short")
+alertcondition(planEnter, "Any plan", "65: ВХОДИТЬ — точный сигнал")
