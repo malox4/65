@@ -100,11 +100,9 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-// только свежий сигнал — без каши по всей истории
-freshBot = brakeBot and haveSig and side == 1 and bar_index == bornMem
-freshTop = brakeTop and haveSig and side == -1 and bar_index == bornMem
-plotshape(freshBot, title = "Тормоз лонг", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.normal, text = "ТОРМОЗ↑", textcolor = colGo)
-plotshape(freshTop, title = "Тормоз шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.normal, text = "ТОРМОЗ↓", textcolor = colStop)
+// только последняя метка (не вся история), чтобы не спорить с «ЖДИ»
+plotshape(brakeBot, title = "Тормоз лонг", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small, text = "ТОРМОЗ↑", textcolor = colGo, show_last = 1)
+plotshape(brakeTop, title = "Тормоз шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small, text = "ТОРМОЗ↓", textcolor = colStop, show_last = 1)
 
 var line lnE = na
 var line lnS = na
