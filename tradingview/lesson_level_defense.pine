@@ -46,51 +46,16 @@ pl = ta.pivotlow(low, swingLen, swingLen)
 bullEng = close > open and close > high[1] and open <= low[1]
 bearEng = close < open and close < low[1] and open >= high[1]
 
-// ——— POC прокси: close бара с max volume на старшем ТФ ———
-f_poc(string tf, int look) =>
-    request.security(syminfo.tickerid, tf, close[ta.highestbars(volume, look)], lookahead = barmerge.lookahead_off)
+// POC прокси: close бара с max volume на старшем ТФ
+pocH4 = showPocH4 ? request.security(syminfo.tickerid, "240", close[ta.highestbars(volume, pocLookH4)], lookahead = barmerge.lookahead_off) : na
+pocD1 = showPocD1 ? request.security(syminfo.tickerid, "D", close[ta.highestbars(volume, pocLookD1)], lookahead = barmerge.lookahead_off) : na
+pocW1 = showPocW1 ? request.security(syminfo.tickerid, "W", close[ta.highestbars(volume, pocLookW1)], lookahead = barmerge.lookahead_off) : na
 
-pocH4 = showPocH4 ? f_poc("240", pocLookH4) : na
-pocD1 = showPocD1 ? f_poc("D", pocLookD1) : na
-pocW1 = showPocW1 ? f_poc("W", pocLookW1) : na
-
-var line lnPocH4 = na
-var line lnPocD1 = na
-var line lnPocW1 = na
-var label lbPocH4 = na
-var label lbPocD1 = na
-var label lbPocW1 = na
-
-f_upd_poc(line ln, label lb, float px, color col, string nm) =>
-    line nln = ln
-    label nlb = lb
-    if not na(px)
-        if na(nln)
-            nln := line.new(bar_index - 30, px, bar_index + 5, px, color = col, width = 1, style = line.style_dashed)
-            nlb := label.new(bar_index + 5, px, nm, style = label.style_label_left, color = color.new(col, 30), textcolor = color.white, size = size.small)
-        else
-            line.set_xy1(nln, bar_index - 30, px)
-            line.set_xy2(nln, bar_index + 5, px)
-            label.set_xy(nlb, bar_index + 5, px)
-            label.set_text(nlb, nm)
-    [nln, nlb]
-
-if barstate.islast
-    [a, b] = f_upd_poc(lnPocH4, lbPocH4, pocH4, colPocH4, "POC H4")
-    lnPocH4 := a
-    lbPocH4 := b
-    [c, d] = f_upd_poc(lnPocD1, lbPocD1, pocD1, colPocD1, "POC D1")
-    lnPocD1 := c
-    lbPocD1 := d
-    [e, f] = f_upd_poc(lnPocW1, lbPocW1, pocW1, colPocW1, "POC W1")
-    lnPocW1 := e
-    lbPocW1 := f
-
-// ——— рабочая зона от ближайшего свинга ———
 var float zMid = na
 var float zTop = na
 var float zBot = na
-var int   zDir = 0      // 1 = зона сверху (сопротивление), -1 = снизу (поддержка)
+var int   zDir = 0      // 1 сопротивление сверху, -1 поддержка снизу
+var int   zBorn = na
 var int   phase = 0     // 0 idle, 1 wait, 2 defense, 3 break
 var int   armedBar = na
 var float entry = na
@@ -98,89 +63,43 @@ var float stop = na
 var float take = na
 var string dealName = ""
 var string dealWhy = ""
+var color dealCol = #0ECB81
 
-var box zb = na
-var line lnTop = na
-var line lnBot = na
-var line lnEntry = na
-var line lnStop = na
-var line lnTake = na
-var label lbTop = na
-var label lbBot = na
-var label lbDeal = na
+pad = slPadAtr * atr
+half = zoneAtr * atr
 
-f_clear_plan() =>
-    if not na(lnEntry)
-        line.delete(lnEntry)
-        lnEntry := na
-    if not na(lnStop)
-        line.delete(lnStop)
-        lnStop := na
-    if not na(lnTake)
-        line.delete(lnTake)
-        lnTake := na
-    if not na(lbDeal)
-        label.delete(lbDeal)
-        lbDeal := na
-
-f_set_zone(float mid, int dir) =>
-    half = zoneAtr * atr
-    zMid := mid
-    zTop := mid + half
-    zBot := mid - half
-    zDir := dir
-    phase := 1
-    armedBar := na
-    entry := na
-    stop := na
-    take := na
-    dealName := ""
-    dealWhy := ""
-    f_clear_plan()
-    if not na(zb)
-        box.delete(zb)
-    if not na(lnTop)
-        line.delete(lnTop)
-    if not na(lnBot)
-        line.delete(lnBot)
-    if not na(lbTop)
-        label.delete(lbTop)
-    if not na(lbBot)
-        label.delete(lbBot)
-    zb := box.new(bar_index - swingLen, zTop, bar_index + 3, zBot, bgcolor = colZone, border_color = colEdge, border_width = 1)
-    lnTop := line.new(bar_index - swingLen, zTop, bar_index + 3, zTop, color = colEdge, width = 2)
-    lnBot := line.new(bar_index - swingLen, zBot, bar_index + 3, zBot, color = colEdge, width = 2)
-    lbTop := label.new(bar_index + 3, zTop, "ЗОНА ВЕРХ", style = label.style_label_left, color = color.new(colEdge, 20), textcolor = color.white, size = size.small)
-    lbBot := label.new(bar_index + 3, zBot, "ЗОНА НИЗ", style = label.style_label_left, color = color.new(colEdge, 20), textcolor = color.white, size = size.small)
-
-// новый свинг → зона
+// новый свинг → зона (только global scope)
 if not na(ph)
-    if phase == 0 or phase == 1 or (phase >= 2 and bar_index - nz(armedBar, bar_index) > planBars)
-        f_set_zone(ph, 1)
+    if phase == 0 or phase == 1 or (phase >= 2 and not na(armedBar) and bar_index - armedBar > planBars)
+        zMid := ph
+        zTop := ph + half
+        zBot := ph - half
+        zDir := 1
+        zBorn := bar_index - swingLen
+        phase := 1
+        armedBar := na
+        entry := na
+        stop := na
+        take := na
+        dealName := ""
+        dealWhy := ""
 
 if not na(pl)
     closer = na(zMid) or math.abs(close - pl) < math.abs(close - zMid)
-    if phase == 0 or (phase == 1 and closer) or (phase >= 2 and bar_index - nz(armedBar, bar_index) > planBars and closer)
-        f_set_zone(pl, -1)
-
-pad = slPadAtr * atr
-
-f_arm(string name, string why, bool isDefense, float e, float s, float t, color dealCol) =>
-    phase := isDefense ? 2 : 3
-    armedBar := bar_index
-    entry := e
-    stop := s
-    take := t
-    dealName := name
-    dealWhy := why
-    f_clear_plan()
-    lnEntry := line.new(bar_index, e, bar_index + 8, e, color = dealCol, width = 2)
-    lnStop := line.new(bar_index, s, bar_index + 8, s, color = colStop, width = 2)
-    lnTake := line.new(bar_index, t, bar_index + 8, t, color = colTp, width = 2)
-    label.new(bar_index + 8, e, "ВХОД", style = label.style_label_left, color = color.new(dealCol, 10), textcolor = color.white, size = size.small)
-    label.new(bar_index + 8, s, "СТОП", style = label.style_label_left, color = color.new(colStop, 10), textcolor = color.white, size = size.small)
-    label.new(bar_index + 8, t, "ТЕЙК", style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small)
-    lbDeal := label.new(bar_index, high + atr * 0.3, name + "\n" + why, style = label.style_label_down, color = color.new(dealCol, 10), textcolor = color.white, size = size.normal)
+    expired = phase >= 2 and not na(armedBar) and bar_index - armedBar > planBars
+    if phase == 0 or (phase == 1 and closer) or (expired and closer)
+        zMid := pl
+        zTop := pl + half
+        zBot := pl - half
+        zDir := -1
+        zBorn := bar_index - swingLen
+        phase := 1
+        armedBar := na
+        entry := na
+        stop := na
+        take := na
+        dealName := ""
+        dealWhy := ""
 
 nearZone = not na(zTop) and close <= zTop + nearAtr * atr and close >= zBot - nearAtr * atr
 cciOkLong = not useCci or cci <= cciBuy
@@ -188,7 +107,6 @@ cciOkShort = not useCci or cci >= cciSell
 
 // защита: отбой от зоны
 if phase == 1 and nearZone and not na(zMid)
-    // поддержка снизу → лонг-защита
     if zDir == -1 and low <= zTop and close > zMid and close > open
         engOk = not useEngulf or bullEng
         if engOk and cciOkLong
@@ -197,14 +115,17 @@ if phase == 1 and nearZone and not na(zMid)
             risk = e - s
             if risk > 0
                 t = e + tpR * risk
-                // цель к ближайшему POC сверху если есть
                 if not na(pocH4) and pocH4 > e
                     t := math.min(t, pocH4)
-                f_arm("ЗАЩИТА · ЛОНГ", "лимит/отбой от зоны снизу", true, e, s, t, colDef)
-                if useEngulf and bullEng
-                    label.new(bar_index, low, "ПОГЛОЩЕНИЕ", style = label.style_label_up, color = color.new(colDef, 20), textcolor = color.white, size = size.tiny)
-    // сопротивление сверху → шорт-защита
-    if zDir == 1 and high >= zBot and close < zMid and close < open
+                phase := 2
+                armedBar := bar_index
+                entry := e
+                stop := s
+                take := t
+                dealName := "ЗАЩИТА · ЛОНГ"
+                dealWhy := "лимит/отбой от зоны снизу"
+                dealCol := colDef
+    if phase == 1 and zDir == 1 and high >= zBot and close < zMid and close < open
         engOk = not useEngulf or bearEng
         if engOk and cciOkShort
             e = close
@@ -214,47 +135,131 @@ if phase == 1 and nearZone and not na(zMid)
                 t = e - tpR * risk
                 if not na(pocH4) and pocH4 < e
                     t := math.max(t, pocH4)
-                f_arm("ЗАЩИТА · ШОРТ", "лимит/отбой от зоны сверху", true, e, s, t, colDef)
-                if useEngulf and bearEng
-                    label.new(bar_index, high, "ПОГЛОЩЕНИЕ", style = label.style_label_down, color = color.new(colDef, 20), textcolor = color.white, size = size.tiny)
+                phase := 2
+                armedBar := bar_index
+                entry := e
+                stop := s
+                take := t
+                dealName := "ЗАЩИТА · ШОРТ"
+                dealWhy := "лимит/отбой от зоны сверху"
+                dealCol := colDef
 
 // пробой: цена ушла под/над зону
 if phase == 1 and not na(zMid)
-    // ушла под поддержку → шорт после пробоя
     if zDir == -1 and close < zBot and close[1] >= zBot
         e = close
         s = zTop + pad
         risk = s - e
         if risk > 0
-            t = e - tpR * risk
-            f_arm("ПРОБОЙ · ШОРТ", "вход после ухода ПОД зону", false, e, s, t, colBrk)
-    // ушла над сопротивление → лонг после пробоя
-    if zDir == 1 and close > zTop and close[1] <= zTop
+            phase := 3
+            armedBar := bar_index
+            entry := e
+            stop := s
+            take := e - tpR * risk
+            dealName := "ПРОБОЙ · ШОРТ"
+            dealWhy := "вход после ухода ПОД зону"
+            dealCol := colBrk
+    if phase == 1 and zDir == 1 and close > zTop and close[1] <= zTop
         e = close
         s = zBot - pad
         risk = e - s
         if risk > 0
-            t = e + tpR * risk
-            f_arm("ПРОБОЙ · ЛОНГ", "вход после ухода НАД зону", false, e, s, t, colBrk)
-
-// тянуть бокс/края
-if barstate.islast and not na(zb) and not na(zTop)
-    box.set_right(zb, bar_index + 3)
-    line.set_x2(lnTop, bar_index + 3)
-    line.set_x2(lnBot, bar_index + 3)
-    label.set_x(lbTop, bar_index + 3)
-    label.set_x(lbBot, bar_index + 3)
-    if not na(lnEntry)
-        line.set_x2(lnEntry, bar_index + 8)
-        line.set_x2(lnStop, bar_index + 8)
-        line.set_x2(lnTake, bar_index + 8)
+            phase := 3
+            armedBar := bar_index
+            entry := e
+            stop := s
+            take := e + tpR * risk
+            dealName := "ПРОБОЙ · ЛОНГ"
+            dealWhy := "вход после ухода НАД зону"
+            dealCol := colBrk
 
 // сброс устаревшего плана
 if phase >= 2 and not na(armedBar) and bar_index - armedBar > planBars
     phase := 0
-    f_clear_plan()
+    entry := na
+    stop := na
+    take := na
+    dealName := ""
+    dealWhy := ""
 
-// таблица
+justDefLong = phase == 2 and phase[1] == 1 and dealName == "ЗАЩИТА · ЛОНГ"
+justDefShort = phase == 2 and phase[1] == 1 and dealName == "ЗАЩИТА · ШОРТ"
+justBrk = phase == 3 and phase[1] == 1
+
+plotshape(justDefLong, title = "Защита лонг", style = shape.triangleup, location = location.belowbar, color = colDef, size = size.small, text = "ЗАЩИТА", textcolor = colDef)
+plotshape(justDefShort, title = "Защита шорт", style = shape.triangledown, location = location.abovebar, color = colDef, size = size.small, text = "ЗАЩИТА", textcolor = colDef)
+plotshape(justBrk and str.contains(dealName, "ЛОНГ"), title = "Пробой лонг", style = shape.triangleup, location = location.belowbar, color = colBrk, size = size.small, text = "ПРОБОЙ", textcolor = colBrk)
+plotshape(justBrk and str.contains(dealName, "ШОРТ"), title = "Пробой шорт", style = shape.triangledown, location = location.abovebar, color = colBrk, size = size.small, text = "ПРОБОЙ", textcolor = colBrk)
+plotshape(justDefLong and useEngulf and bullEng, title = "Поглощение", style = shape.circle, location = location.belowbar, color = colDef, size = size.tiny, text = "ПОГЛОЩЕНИЕ", textcolor = colDef)
+plotshape(justDefShort and useEngulf and bearEng, title = "Поглощение шорт", style = shape.circle, location = location.abovebar, color = colDef, size = size.tiny, text = "ПОГЛОЩЕНИЕ", textcolor = colDef)
+
+// рисунок только на последнем баре
+var line lnTop = na
+var line lnBot = na
+var line lnEntry = na
+var line lnStop = na
+var line lnTake = na
+var line lnPocH4 = na
+var line lnPocD1 = na
+var line lnPocW1 = na
+var box zb = na
+var label lbTop = na
+var label lbBot = na
+var label lbDeal = na
+var label lbEntry = na
+var label lbStop = na
+var label lbTake = na
+var label lbPocH4 = na
+var label lbPocD1 = na
+var label lbPocW1 = na
+
+if barstate.islast
+    line.delete(lnTop)
+    line.delete(lnBot)
+    line.delete(lnEntry)
+    line.delete(lnStop)
+    line.delete(lnTake)
+    line.delete(lnPocH4)
+    line.delete(lnPocD1)
+    line.delete(lnPocW1)
+    box.delete(zb)
+    label.delete(lbTop)
+    label.delete(lbBot)
+    label.delete(lbDeal)
+    label.delete(lbEntry)
+    label.delete(lbStop)
+    label.delete(lbTake)
+    label.delete(lbPocH4)
+    label.delete(lbPocD1)
+    label.delete(lbPocW1)
+
+    x2 = bar_index + 8
+    if phase != 0 and not na(zTop) and not na(zBorn)
+        zb := box.new(zBorn, zTop, x2, zBot, bgcolor = colZone, border_color = colEdge, border_width = 1)
+        lnTop := line.new(zBorn, zTop, x2, zTop, color = colEdge, width = 2)
+        lnBot := line.new(zBorn, zBot, x2, zBot, color = colEdge, width = 2)
+        lbTop := label.new(x2, zTop, "ЗОНА ВЕРХ", style = label.style_label_left, color = color.new(colEdge, 20), textcolor = color.white, size = size.small)
+        lbBot := label.new(x2, zBot, "ЗОНА НИЗ", style = label.style_label_left, color = color.new(colEdge, 20), textcolor = color.white, size = size.small)
+
+        if phase >= 2 and not na(entry) and not na(stop) and not na(take) and not na(armedBar)
+            lnEntry := line.new(armedBar, entry, x2, entry, color = dealCol, width = 2)
+            lnStop := line.new(armedBar, stop, x2, stop, color = colStop, width = 2)
+            lnTake := line.new(armedBar, take, x2, take, color = colTp, width = 2)
+            lbEntry := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = color.new(dealCol, 10), textcolor = color.white, size = size.small)
+            lbStop := label.new(x2, stop, "СТОП", style = label.style_label_left, color = color.new(colStop, 10), textcolor = color.white, size = size.small)
+            lbTake := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small)
+            lbDeal := label.new(bar_index + 2, zMid, dealName + "\n" + dealWhy, style = label.style_label_left, color = color.new(dealCol, 10), textcolor = color.white, size = size.normal)
+
+    if showPocH4 and not na(pocH4)
+        lnPocH4 := line.new(bar_index - 40, pocH4, x2, pocH4, color = colPocH4, width = 1, style = line.style_dashed)
+        lbPocH4 := label.new(x2, pocH4, "POC H4", style = label.style_label_left, color = color.new(colPocH4, 30), textcolor = color.white, size = size.small)
+    if showPocD1 and not na(pocD1)
+        lnPocD1 := line.new(bar_index - 40, pocD1, x2, pocD1, color = colPocD1, width = 1, style = line.style_dashed)
+        lbPocD1 := label.new(x2, pocD1, "POC D1", style = label.style_label_left, color = color.new(colPocD1, 30), textcolor = color.white, size = size.small)
+    if showPocW1 and not na(pocW1)
+        lnPocW1 := line.new(bar_index - 40, pocW1, x2, pocW1, color = colPocW1, width = 1, style = line.style_dashed)
+        lbPocW1 := label.new(x2, pocW1, "POC W1", style = label.style_label_left, color = color.new(colPocW1, 30), textcolor = color.white, size = size.small)
+
 var table tb = table.new(position.top_right, 2, 8, bgcolor = color.new(#0B0E11, 10), border_width = 1, border_color = #2B3139)
 if barstate.islast
     table.cell(tb, 0, 0, "Урок · Защита уровня", text_color = color.white, text_size = size.small)
@@ -275,5 +280,5 @@ if barstate.islast
     table.cell(tb, 0, 7, "CCI", text_color = #848E9C, text_size = size.small)
     table.cell(tb, 1, 7, str.tostring(cci, "#.#"), text_color = color.white, text_size = size.small)
 
-alertcondition(phase == 2 and bar_index == armedBar, "Защита уровня", "Урок: сценарий ЗАЩИТА уровня")
-alertcondition(phase == 3 and bar_index == armedBar, "Пробой зоны", "Урок: вход после ухода за зону")
+alertcondition(phase == 2 and phase[1] == 1, "Защита уровня", "Урок: сценарий ЗАЩИТА уровня")
+alertcondition(phase == 3 and phase[1] == 1, "Пробой зоны", "Урок: вход после ухода за зону")
