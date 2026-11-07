@@ -144,9 +144,9 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-// примеры на истории (не план сделки — только метки «вот такие свечи»)
-plotshape(showHist and limitBuy, title = "Пример лимит покупатель", style = shape.triangleup, location = location.belowbar, color = colBuy, size = size.tiny, text = "ЛИМ.ПОКУП", textcolor = colBuy)
-plotshape(showHist and limitSell, title = "Пример лимит продавец", style = shape.triangledown, location = location.abovebar, color = colSell, size = size.tiny, text = "ЛИМ.ПРОДАВ", textcolor = colSell)
+// примеры на истории — НЕ сигнал войти сейчас, а «такие свечи урок называл лимитником»
+plotshape(showHist and limitBuy, title = "Пример отбоя вверх", style = shape.triangleup, location = location.belowbar, color = colBuy, size = size.tiny, text = "пример\nотбой ↑", textcolor = colBuy)
+plotshape(showHist and limitSell, title = "Пример отбоя вниз", style = shape.triangledown, location = location.abovebar, color = colSell, size = size.tiny, text = "пример\nотбой ↓", textcolor = colSell)
 
 // ——— рисунок ———
 var line lnPoc = na
@@ -191,7 +191,7 @@ if barstate.islast
         lbHi := label.new(x2, vah, "VAH", style = label.style_label_left, color = color.new(colVa, 30), textcolor = color.white, size = size.tiny)
 
     if status == "WAIT"
-        lb := label.new(x2, close, "ЖДИ\nреакцию у объёмного уровня\nили лимитного игрока", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+        lb := label.new(x2, close, "СЕЙЧАС НЕ ВХОДИ\nзелёные/красные треугольники\n= примеры в прошлом\nвход только когда будет\n«ЛОНГ/ШОРТ СЕЙЧАС»", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
     else if status == "LATE"
         lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
     else if status == "WAIT_FILL"
@@ -217,7 +217,7 @@ var table t = table.new(position.bottom_right, 1, 4, bgcolor = color.new(#0B0E11
 if barstate.islast
     big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди цену к зелёной" : "⏳ ЖДИ · объём / лимитник"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colBuy : status == "LATE" ? colLate : colPoc, text_size = size.large)
-    table.cell(t, 0, 1, haveSig ? (mode + " | вход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "урок: реакция на объёмный уровень + лимитный игрок", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, haveSig ? (mode + " | вход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "треугольники = учебные примеры · не ордера", text_color = color.white, text_size = size.small)
     table.cell(t, 0, 2, "POC " + (na(poc) ? "—" : str.tostring(poc, format.mintick)) + " | VAL/VAH прокси", text_color = #848E9C, text_size = size.tiny)
     table.cell(t, 0, 3, "файл: tradingview/lesson_limit_volume.pine", text_color = #848E9C, text_size = size.tiny)
 
