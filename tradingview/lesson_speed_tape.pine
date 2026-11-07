@@ -1,8 +1,5 @@
 //@version=6
-// Урок 21.02.2023 · Speed of Tape (прокси ATAS)
-// ВАЖНО ДЛЯ TV: если индикатор «внизу» в пустом окне —
-// 1) удали его крестиком  2) Add to chart заново (одного Save мало!)
-indicator(title = "65 SpeedTape", shorttitle = "65 SpeedTape", overlay = true, max_labels_count = 200, max_lines_count = 20)
+indicator("65 SpeedTape", overlay = true, max_labels_count = 50, max_lines_count = 20)
 
 grp = "План"
 volMult   = input.float(1.3, "Объём × SMA", minval = 1.0, step = 0.1, group = grp)
@@ -104,12 +101,10 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-// жёлтые свечи на ЦЕНЕ (barcolor всегда на основном графике)
 barcolor(active ? color.new(colSpeed, 50) : na)
 
-// примеры — plotshape ТОЛЬКО при overlay=true будут у свечей
-plotshape(showHist and speedLong, title = "пример↑", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small, text = "пример↑", textcolor = colGo)
-plotshape(showHist and speedShort, title = "пример↓", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small, text = "пример↓", textcolor = colStop)
+plotshape(showHist and speedLong, "пример↑", shape.triangleup, location.belowbar, colGo, size = size.small, text = "пример↑", textcolor = colGo)
+plotshape(showHist and speedShort, "пример↓", shape.triangledown, location.abovebar, colStop, size = size.small, text = "пример↓", textcolor = colStop)
 
 var line lnE = na
 var line lnS = na
@@ -118,7 +113,6 @@ var label lb = na
 var label lbE = na
 var label lbS = na
 var label lbT = na
-var label lbHint = na
 
 if barstate.islast
     line.delete(lnE)
@@ -128,11 +122,7 @@ if barstate.islast
     label.delete(lbE)
     label.delete(lbS)
     label.delete(lbT)
-    label.delete(lbHint)
     x2 = bar_index + 8
-
-    // если видишь ЭТУ подсказку на цене — overlay ок; если она внизу в пустом окне — удали индикатор и Add to chart
-    lbHint := label.new(bar_index, high, "должны быть НА СВЕЧАХ\nне в пустом окне внизу", style = label.style_label_down, color = color.new(#F0B90B, 0), textcolor = color.black, size = size.tiny)
 
     if status == "WAIT"
         lb := label.new(x2, close, "СЕЙЧАС НЕ ВХОДИ\nжёлтая = всплеск Speed/Vol\n▲▼ пример = не ордер\nвход только при СЕЙЧАС", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
@@ -154,7 +144,7 @@ if barstate.islast
     big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди ВХОД" : "⏳ ЖДИ"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
     table.cell(t, 0, 1, haveSig ? (mode + "\nвход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "▲▼ = примеры · жёлтая = Speed/Vol", text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, "если индикатор ВНИЗУ в пустом окне → удали → Add to chart", text_color = #F0B90B, text_size = size.tiny)
+    table.cell(t, 0, 2, "Алерт: колокол → 65 SpeedTape → Any alert()", text_color = #848E9C, text_size = size.tiny)
 
 newLong = speedLong and not na(bornMem) and bar_index == bornMem and side == 1
 newShort = speedShort and not na(bornMem) and bar_index == bornMem and side == -1
