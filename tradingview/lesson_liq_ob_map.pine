@@ -1,0 +1,142 @@
+//@version=6
+// Урок-практика 27.02.2023 · карта: зелёная/красная ликвидность + классический ОБ + инсайд.
+// Зелёный = не снята; красный = снята. ОБ после импульса. Цель = ближайшая зелёная ликвидность.
+// Старые скрипты уроков не заменяет — вешай рядом с «План ретеста» при необходимости.
+indicator("Урок · Ликв+ОБ карта", overlay = true, max_lines_count = 60, max_boxes_count = 20, max_labels_count = 40)
+
+grp = "Карта"
+swingLen   = input.int(5, "Swing", minval = 2, maxval = 15, group = grp)
+maxLvls    = input.int(8, "Макс. уровней ликвидности", minval = 2, maxval = 20, group = grp)
+impulseAtr = input.float(1.1, "Импульс ОБ × ATR", minval = 0.5, step = 0.1, group = grp)
+showOb     = input.bool(true, "Классический ОБ", group = grp)
+showIb     = input.bool(true, "Инсайд-бар", group = grp)
+showTarget = input.bool(true, "Ближайшая зелёная цель", group = grp)
+showHelp   = input.bool(true, "Таблица", group = grp)
+colLive = input.color(#0ECB81, "Неснятая ликвидность", group = grp)
+colDead = input.color(#F6465D, "Снятая ликвидность", group = grp)
+colOb   = input.color(color.new(#3B82F6, 75), "ОБ", group = grp)
+colTgt  = input.color(#F0B90B, "Цель", group = grp)
+
+atr = ta.atr(14)
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float[] lvPrice = array.new_float()
+var int[]   lvBorn  = array.new_int()
+var int[]   lvKind  = array.new_int()   // 1 = high, -1 = low
+var bool[]  lvDead  = array.new_bool()
+var line[]  lvLine  = array.new_line()
+
+pushLvl(price, kind) =>
+    array.push(lvPrice, price)
+    array.push(lvBorn, bar_index - swingLen)
+    array.push(lvKind, kind)
+    array.push(lvDead, false)
+    array.push(lvLine, line.new(bar_index - swingLen, price, bar_index + 1, price, color = colLive, width = 1, style = line.style_dashed))
+    while array.size(lvPrice) > maxLvls
+        line.delete(array.shift(lvLine))
+        array.shift(lvPrice)
+        array.shift(lvBorn)
+        array.shift(lvKind)
+        array.shift(lvDead)
+
+if not na(ph)
+    pushLvl(ph, 1)
+if not na(pl)
+    pushLvl(pl, -1)
+
+// mitigation: high-level снят если high >= level; low-level если low <= level
+n = array.size(lvPrice)
+if n > 0
+    for i = 0 to n - 1
+        p = array.get(lvPrice, i)
+        k = array.get(lvKind, i)
+        dead = array.get(lvDead, i)
+        if not dead
+            if k == 1 and high >= p
+                array.set(lvDead, i, true)
+            if k == -1 and low <= p
+                array.set(lvDead, i, true)
+        ln = array.get(lvLine, i)
+        line.set_xy2(ln, bar_index + 1, p)
+        line.set_color(ln, array.get(lvDead, i) ? colDead : colLive)
+
+// классический ОБ: встречная свеча + импульс
+body = math.abs(close - open)
+bullImp = close > open and body >= impulseAtr * atr and close > high[1]
+bearImp = close < open and body >= impulseAtr * atr and close < low[1]
+obBull = showOb and bullImp and close[1] < open[1]
+obBear = showOb and bearImp and close[1] > open[1]
+
+var box[] obBoxes = array.new_box()
+addOb(isLong) =>
+    top = high[1]
+    bot = low[1]
+    b = box.new(bar_index - 1, top, bar_index + 6, bot, bgcolor = colOb, border_color = color.new(#3B82F6, 20), border_width = 1, text = isLong ? "ОБ↑" : "ОБ↓", text_color = color.white, text_size = size.tiny)
+    array.push(obBoxes, b)
+    if array.size(obBoxes) > 6
+        box.delete(array.shift(obBoxes))
+
+if obBull
+    addOb(true)
+if obBear
+    addOb(false)
+
+if array.size(obBoxes) > 0
+    for i = 0 to array.size(obBoxes) - 1
+        box.set_right(array.get(obBoxes, i), bar_index + 1)
+
+// инсайд-бар
+isInside = showIb and high < high[1] and low > low[1]
+plotshape(isInside, title = "IB", style = shape.circle, location = location.abovebar, color = #848E9C, size = size.tiny, text = "IB", textcolor = #848E9C)
+
+// ближайшая неснятая ликвидность как цель (вверх и вниз)
+float tgtUp = na
+float tgtDn = na
+if n > 0
+    for i = 0 to n - 1
+        if not array.get(lvDead, i)
+            p = array.get(lvPrice, i)
+            k = array.get(lvKind, i)
+            if k == 1 and p > close
+                tgtUp := na(tgtUp) ? p : math.min(tgtUp, p)
+            if k == -1 and p < close
+                tgtDn := na(tgtDn) ? p : math.max(tgtDn, p)
+
+var line lnTgtUp = na
+var line lnTgtDn = na
+var label lbTgtUp = na
+var label lbTgtDn = na
+if barstate.islast and showTarget
+    line.delete(lnTgtUp)
+    line.delete(lnTgtDn)
+    label.delete(lbTgtUp)
+    label.delete(lbTgtDn)
+    if not na(tgtUp)
+        lnTgtUp := line.new(bar_index - 5, tgtUp, bar_index + 10, tgtUp, color = colTgt, width = 2, style = line.style_solid)
+        lbTgtUp := label.new(bar_index + 10, tgtUp, "цель ↑ (зелёная ликв.)", style = label.style_label_left, color = color.new(colTgt, 20), textcolor = color.black, size = size.small)
+    if not na(tgtDn)
+        lnTgtDn := line.new(bar_index - 5, tgtDn, bar_index + 10, tgtDn, color = colTgt, width = 2, style = line.style_solid)
+        lbTgtDn := label.new(bar_index + 10, tgtDn, "цель ↓ (зелёная ликв.)", style = label.style_label_left, color = color.new(colTgt, 20), textcolor = color.black, size = size.small)
+
+var table t = table.new(position.top_right, 1, 7, bgcolor = color.new(#0B0E11, 12), border_width = 1, border_color = #2B3139)
+if showHelp and barstate.islast
+    liveN = 0
+    deadN = 0
+    if n > 0
+        for i = 0 to n - 1
+            if array.get(lvDead, i)
+                deadN += 1
+            else
+                liveN += 1
+    table.cell(t, 0, 0, "УРОК 27.02 · ЛИКВ+ОБ", text_color = #F0B90B, text_size = size.normal)
+    table.cell(t, 0, 1, "🟢 зелёный = не снята · 🔴 красный = снята", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "ОБ = зона перед импульсом · IB = инсайд", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 3, "Вход: ретест ОБ/пробоя · тейк: жёлтая цель", text_color = #0ECB81, text_size = size.small)
+    table.cell(t, 0, 4, "Живых уровней: " + str.tostring(liveN) + " · снятых: " + str.tostring(deadN), text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 5, "Цель↑ " + (na(tgtUp) ? "—" : str.tostring(tgtUp, format.mintick)), text_color = colTgt, text_size = size.tiny)
+    table.cell(t, 0, 6, "Цель↓ " + (na(tgtDn) ? "—" : str.tostring(tgtDn, format.mintick)), text_color = colTgt, text_size = size.tiny)
+
+alertcondition(obBull, "ОБ лонг-зона", "Классический ОБ вверх")
+alertcondition(obBear, "ОБ шорт-зона", "Классический ОБ вниз")
+alertcondition(isInside, "Инсайд-бар", "Появился инсайд-бар")
