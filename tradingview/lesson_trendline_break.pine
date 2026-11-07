@@ -1,0 +1,305 @@
+//@version=6
+// Урок 19.02.2023 ~20:20 · LTC пробой нисходящей трендовой — UX как SpeedTape
+indicator("65 TL Break", overlay = true, max_labels_count = 100, max_lines_count = 80)
+
+grp = "План"
+pivotLen  = input.int(5, "Пивот хай/лоу (баров)", minval = 2, maxval = 20, group = grp)
+volMult   = input.float(1.2, "Объём × SMA на пробое", minval = 1.0, step = 0.1, group = grp)
+tpR       = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
+slPad     = input.float(0.15, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
+liveAtr   = input.float(0.6, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
+freshBars = input.int(5, "Сигнал N свечей", minval = 1, maxval = 15, group = grp)
+atrLen    = input.int(14, "ATR", group = grp)
+useCci    = input.bool(true, "Фильтр CCI (как на уроке)", group = grp)
+cciLen    = input.int(30, "CCI длина", group = grp)
+cciLong   = input.float(100.0, "CCI мин для лонга", group = grp)
+cciShort  = input.float(-100.0, "CCI макс для шорта", group = grp)
+showHist  = input.bool(true, "Примеры на истории", group = grp)
+lookN     = input.int(20, "Свечей ждать исход", minval = 5, maxval = 60, group = grp)
+histDraw  = input.int(4, "Сколько примеров разбирать", minval = 1, maxval = 10, group = grp)
+showTl    = input.bool(true, "Рисовать трендовую", group = grp)
+
+colGo = #0ECB81
+colStop = #F6465D
+colTp = #3B82F6
+colWait = #2B3139
+colLate = #F6465D
+colNow = #F0B90B
+colSpeed = #F0B90B
+colMiss = #848E9C
+colTl = #3B82F6
+
+atr = ta.atr(atrLen)
+volSma = ta.sma(volume, 20)
+hiVol = volume > volSma * volMult
+cci = ta.cci(hlc3, cciLen)
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float h1 = na
+var float h2 = na
+var int   hb1 = na
+var int   hb2 = na
+var float l1 = na
+var float l2 = na
+var int   lb1 = na
+var int   lb2 = na
+
+if not na(ph)
+    h2 := h1
+    hb2 := hb1
+    h1 := ph
+    hb1 := bar_index - pivotLen
+
+if not na(pl)
+    l2 := l1
+    lb2 := lb1
+    l1 := pl
+    lb1 := bar_index - pivotLen
+
+descTl = not na(h1) and not na(h2) and not na(hb1) and not na(hb2) and h2 > h1 and hb2 < hb1
+ascTl  = not na(l1) and not na(l2) and not na(lb1) and not na(lb2) and l2 < l1 and lb2 < lb1
+
+float tlDn = na
+float tlUp = na
+if descTl and hb1 != hb2
+    tlDn := h2 + (h1 - h2) * (bar_index - hb2) / (hb1 - hb2)
+if ascTl and lb1 != lb2
+    tlUp := l2 + (l1 - l2) * (bar_index - lb2) / (lb1 - lb2)
+
+float tlDnPrev = na
+float tlUpPrev = na
+if descTl and hb1 != hb2
+    tlDnPrev := h2 + (h1 - h2) * (bar_index - 1 - hb2) / (hb1 - hb2)
+if ascTl and lb1 != lb2
+    tlUpPrev := l2 + (l1 - l2) * (bar_index - 1 - lb2) / (lb1 - lb2)
+
+breakLong  = descTl and not na(tlDn) and not na(tlDnPrev) and close > tlDn and close[1] <= tlDnPrev and hiVol and close > open and (not useCci or cci >= cciLong)
+breakShort = ascTl and not na(tlUp) and not na(tlUpPrev) and close < tlUp and close[1] >= tlUpPrev and hiVol and close < open and (not useCci or cci <= cciShort)
+
+pad = slPad * atr
+float entry = na
+float stop = na
+float take = na
+int side = 0
+string mode = ""
+
+if breakLong
+    e = close
+    s = math.min(nz(l1, low), low) - pad
+    r = e - s
+    if r > 0
+        entry := e
+        stop := s
+        take := e + tpR * r
+        side := 1
+        mode := "пробой ↓трендовой ↑"
+
+if breakShort and na(entry)
+    e = close
+    s = math.max(nz(h1, high), high) + pad
+    r = s - e
+    if r > 0
+        entry := e
+        stop := s
+        take := e - tpR * r
+        side := -1
+        mode := "пробой ↑трендовой ↓"
+
+var float eMem = na
+var float sMem = na
+var float tMem = na
+var int sideMem = 0
+var string modeMem = ""
+var int bornMem = na
+
+if not na(entry) and side != 0
+    eMem := entry
+    sMem := stop
+    tMem := take
+    sideMem := side
+    modeMem := mode
+    bornMem := bar_index
+
+haveSig = not na(eMem) and not na(bornMem) and (bar_index - bornMem) <= freshBars
+if haveSig
+    entry := eMem
+    stop := sMem
+    take := tMem
+    side := sideMem
+    mode := modeMem
+else
+    eMem := na
+    sMem := na
+    tMem := na
+    sideMem := 0
+    modeMem := ""
+    bornMem := na
+    entry := na
+    stop := na
+    take := na
+    side := 0
+    mode := ""
+
+nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
+late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
+status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+
+barcolor(hiVol ? color.new(colSpeed, 55) : na)
+
+plotshape(showHist and breakLong, title = "+", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.tiny)
+plotshape(showHist and breakShort, title = "-", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.tiny)
+
+var array<int>   exBi   = array.new_int()
+var array<int>   exSide = array.new_int()
+var array<float> exE    = array.new_float()
+var array<float> exS    = array.new_float()
+var array<float> exT    = array.new_float()
+var array<int>   exOut  = array.new_int()
+var array<int>   exAge  = array.new_int()
+
+pushEx(int bi, int sSide, float e0, float s0, float t0) =>
+    array.push(exBi, bi)
+    array.push(exSide, sSide)
+    array.push(exE, e0)
+    array.push(exS, s0)
+    array.push(exT, t0)
+    array.push(exOut, 0)
+    array.push(exAge, 0)
+    while array.size(exBi) > histDraw + 3
+        array.shift(exBi)
+        array.shift(exSide)
+        array.shift(exE)
+        array.shift(exS)
+        array.shift(exT)
+        array.shift(exOut)
+        array.shift(exAge)
+
+if barstate.isconfirmed and showHist and (breakLong or breakShort) and not na(entry) and side != 0
+    pushEx(bar_index, side, entry, stop, take)
+
+if showHist and array.size(exBi) > 0
+    for i = 0 to array.size(exBi) - 1
+        if array.get(exOut, i) == 0 and bar_index > array.get(exBi, i)
+            age = array.get(exAge, i) + 1
+            array.set(exAge, i, age)
+            sSide = array.get(exSide, i)
+            s0 = array.get(exS, i)
+            t0 = array.get(exT, i)
+            if sSide == 1
+                if low <= s0
+                    array.set(exOut, i, -1)
+                else if high >= t0
+                    array.set(exOut, i, 1)
+            else
+                if high >= s0
+                    array.set(exOut, i, -1)
+                else if low <= t0
+                    array.set(exOut, i, 1)
+            if array.get(exOut, i) == 0 and age >= lookN
+                array.set(exOut, i, 2)
+
+var array<line> histLines = array.new_line()
+var array<label> histLabs = array.new_label()
+var line lnTl = na
+
+if barstate.islast
+    line.delete(lnTl)
+    if showTl and descTl and not na(hb2) and not na(h2) and not na(tlDn)
+        lnTl := line.new(hb2, h2, bar_index + 2, tlDn, color = color.new(colTl, 20), width = 2)
+    else if showTl and ascTl and not na(lb2) and not na(l2) and not na(tlUp)
+        lnTl := line.new(lb2, l2, bar_index + 2, tlUp, color = color.new(colStop, 30), width = 2)
+
+if barstate.islast and showHist
+    if array.size(histLines) > 0
+        for k = 0 to array.size(histLines) - 1
+            line.delete(array.get(histLines, k))
+        array.clear(histLines)
+    if array.size(histLabs) > 0
+        for k = 0 to array.size(histLabs) - 1
+            label.delete(array.get(histLabs, k))
+        array.clear(histLabs)
+    nEx = array.size(exBi)
+    if nEx > 0
+        fromIdx = math.max(0, nEx - histDraw)
+        for i = fromIdx to nEx - 1
+            bi = array.get(exBi, i)
+            sSide = array.get(exSide, i)
+            e0 = array.get(exE, i)
+            s0 = array.get(exS, i)
+            t0 = array.get(exT, i)
+            outc = array.get(exOut, i)
+            xEnd = bi + lookN
+            array.push(histLines, line.new(bi, e0, bi + math.max(4, int(lookN * 0.4)), t0, color = color.new(colTp, 20), width = 3))
+            array.push(histLines, line.new(bi, t0, xEnd, t0, color = color.new(colTp, 30), width = 2, style = line.style_dashed))
+            array.push(histLines, line.new(bi, s0, xEnd, s0, color = color.new(colStop, 50), width = 1, style = line.style_dotted))
+            risk = math.abs(e0 - s0)
+            reward = math.abs(t0 - e0)
+            rr = risk > 0 ? reward / risk : 0.0
+            pct = e0 != 0 ? (sSide == 1 ? (t0 - e0) / e0 : (e0 - t0) / e0) * 100.0 : 0.0
+            res = outc == 1 ? "итог: ТЕЙК ✓" : outc == -1 ? "итог: СТОП ✗" : outc == 2 ? "итог: мимо" : "итог: ещё идёт"
+            txt = (sSide == 1 ? "ЛОНГ" : "ШОРТ") + "\nвход " + str.tostring(e0, format.mintick) + "\nстоп " + str.tostring(s0, format.mintick) + "\nтейк " + str.tostring(t0, format.mintick) + "\n+" + str.tostring(pct, "#.##") + "% · " + str.tostring(rr, "#.##") + "R\n" + res
+            array.push(histLabs, label.new(bi + 2, e0, txt, style = sSide == 1 ? label.style_label_up : label.style_label_down, color = color.new(outc == 1 ? colGo : outc == -1 ? colStop : colMiss, 5), textcolor = color.white, size = size.normal))
+            array.push(histLabs, label.new(xEnd, t0, "ТЕЙК " + str.tostring(t0, format.mintick) + " (+" + str.tostring(pct, "#.##") + "%)", style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small))
+
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var label lb = na
+var label lbE = na
+var label lbS = na
+var label lbT = na
+
+if barstate.islast
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    label.delete(lb)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT)
+    x2 = bar_index + 6
+
+    if status == "WAIT"
+        lb := label.new(x2, close, "НЕ ВХОДИ СЕЙЧАС\n\nУрок LTC 19.02: пробой трендовой\nсиняя = ↓тренд · ▲ = пробой вверх\n▼ = пробой вверх-тренда вниз\nвход/стоп/тейк = цены + %/R\n\nЖди ЛОНГ/ШОРТ СЕЙЧАС", style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
+    else if status == "LATE"
+        lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 0), textcolor = color.white, size = size.large)
+    else
+        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди цену") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди цену")
+        col = side == 1 ? colGo : colStop
+        lb := label.new(x2, entry, sideTxt + "\n" + mode, style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lnE := line.new(nz(bornMem, bar_index), entry, x2, entry, color = colGo, width = 4)
+        lnS := line.new(nz(bornMem, bar_index), stop, x2, stop, color = colStop, width = 3)
+        lnT := line.new(nz(bornMem, bar_index), take, x2, take, color = colTp, width = 3)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+
+var table t = table.new(position.top_right, 1, 4, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "LATE" ? "ОПОЗДАЛ" : status == "WAIT_FILL" ? "жди ВХОД" : "ЖДИ"
+    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
+    table.cell(t, 0, 1, haveSig ? (mode + " | вход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "урок 19.02 LTC: пробой трендовой + объём (+CCI)", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "▲ пробой ↓линии · ▼ пробой ↑линии", text_color = #848E9C, text_size = size.small)
+    table.cell(t, 0, 3, "Эталон с экрана: LTC ~101 / цель к 103–105", text_color = #848E9C, text_size = size.small)
+
+newLong = breakLong and not na(bornMem) and bar_index == bornMem and side == 1
+newShort = breakShort and not na(bornMem) and bar_index == bornMem and side == -1
+goLong = status == "NOW" and side == 1 and not (status[1] == "NOW" and side[1] == 1)
+goShort = status == "NOW" and side == -1 and not (status[1] == "NOW" and side[1] == -1)
+
+if barstate.isconfirmed
+    if newLong
+        alert("TL BREAK ЛОНГ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick), alert.freq_once_per_bar_close)
+    if newShort
+        alert("TL BREAK ШОРТ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick), alert.freq_once_per_bar_close)
+    if goLong and not newLong
+        alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
+    if goShort and not newShort
+        alert("ШОРТ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+alertcondition(newLong, title = "TL лонг", message = "Пробой нисходящей трендовой")
+alertcondition(newShort, title = "TL шорт", message = "Пробой восходящей трендовой")
+alertcondition(goLong, title = "Лонг сейчас", message = "ЛОНГ СЕЙЧАС")
+alertcondition(goShort, title = "Шорт сейчас", message = "ШОРТ СЕЙЧАС")

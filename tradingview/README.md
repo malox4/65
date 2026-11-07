@@ -84,6 +84,16 @@ Live-сделка: свип хая → шорт, вход ~1.5338 / стоп 1.5
 1. Вставить `lesson_matic_short.pine` → Save → **Add to chart**.  
 2. ТФ **5m / 15m**. Старые pine не удалять.
 
+## Урок 19.02.2023 ~20:20 · Пробой трендовой LTC (`lesson_trendline_break.pine`)
+
+Та же дата, другая запись: **LTCUSDT** — нисходящая трендовая → пробой вверх + объём, MACD_LB/CCI на TV, дельта на DeltaRiver. UX как SpeedTape (ЖДИ/СЕЙЧАС, цены на тейке).
+
+Док: [`docs/lesson_trendline_break_2023-02-19.md`](../docs/lesson_trendline_break_2023-02-19.md).  
+Индикатор: **«65 TL Break»**.
+
+1. Вставить `lesson_trendline_break.pine` → Save → **Add to chart**.  
+2. ТФ **5m / 15m / 1H**. Старые pine не удалять.
+
 ## Урок 03.02.2022 · Zoner+Лента (`lesson_zoner_ribbon.pine`)
 
 Ранний урок: **EMA-лента**, красная/зелёная зона, **Zoner %** (0…100 + стопы), фильтр **объёма в тенях** (как потом «лимитный игрок»). Статусы ЖДИ / СЕЙЧАС / ОПОЗДАЛ.
