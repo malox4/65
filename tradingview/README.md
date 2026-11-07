@@ -74,6 +74,16 @@
 2. Вставить `lesson_speed_tape.pine` → Save → **Add to chart** (не только Save).  
 3. ТФ **15m / 1H**. Должны быть жёлтые свечи + ▲▼ **на цене**, не внизу.
 
+## Разбор 19.02.2023 · MATIC шорт после свипа (`lesson_matic_short.pine`)
+
+Live-сделка: свип хая → шорт, вход ~1.5338 / стоп 1.5395 / тейк 1.5221 (~2R). UX как SpeedTape.
+
+Док: [`docs/lesson_matic_short_sweep_2023-02-19.md`](../docs/lesson_matic_short_sweep_2023-02-19.md).  
+Индикатор: **«65 MATIC Sweep»**.
+
+1. Вставить `lesson_matic_short.pine` → Save → **Add to chart**.  
+2. ТФ **5m / 15m**. Старые pine не удалять.
+
 ## Урок 03.02.2022 · Zoner+Лента (`lesson_zoner_ribbon.pine`)
 
 Ранний урок: **EMA-лента**, красная/зелёная зона, **Zoner %** (0…100 + стопы), фильтр **объёма в тенях** (как потом «лимитный игрок»). Статусы ЖДИ / СЕЙЧАС / ОПОЗДАЛ.
