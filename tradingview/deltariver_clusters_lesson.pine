@@ -1,100 +1,98 @@
 //@version=6
-// Урок 03.03.2023 · кластеры DeltaRiver — ПРОСТОЙ учебный режим
-// Урок учил НЕ «торговать все треугольники», а видеть:
-//   1) крупную дельту В ТЕНИ свечи (как фильтр в DeltaRiver)
-//   2) на НИЗУ тени SellΔ → идея лонга; на ВЕРХУ BuyΔ → идея шорта
-// TV = прокси через 1m LTF. Не сигнал бота.
-indicator("Урок · Кластеры DeltaRiver", overlay = true, max_labels_count = 50, max_boxes_count = 10)
+// Урок 03.03.2023 · кластеры / дельта в тенях (учебный)
+// Если LTF пустой — считается по теням самой свечи (чтобы график НЕ был пустым).
+indicator("Урок · Кластеры DeltaRiver", overlay = true, max_labels_count = 40)
 
-grp = "Урок (читай подсказки)"
-buyDeltaMin  = input.float(0, "Мин. покупки в ВЕРХНЕЙ половине (0 = авто)", minval = 0, group = grp, tooltip = "0 = порог = SMA объёма × множитель. Или поставь как в DeltaRiver вручную.")
-sellDeltaMin = input.float(0, "Мин. продажи в НИЖНЕЙ половине (0 = авто)", minval = 0, group = grp)
-autoMult     = input.float(2.5, "Авто-порог: SMA(volume)×", minval = 1.0, step = 0.1, group = grp)
-ltf          = input.timeframe("1", "LTF", group = grp)
-onlyExtremes = input.bool(true, "Только у локального хая/лоя (меньше спама)", group = grp)
-swingLen     = input.int(5, "Swing", minval = 2, maxval = 15, group = grp)
-needVolX     = input.float(1.5, "Объём бара ≥ SMA×", minval = 1.0, step = 0.1, group = grp)
-showHelp     = input.bool(true, "Подсказка на графике", group = grp)
+grp = "Урок"
+sensitivity = input.float(1.2, "Чувствительность (ниже = больше меток)", minval = 0.5, maxval = 3.0, step = 0.1, group = grp, tooltip = "1.0–1.3 обычно видно метки. Выше 2 — почти пусто.")
+ltf         = input.timeframe("1", "LTF (если биржа отдаёт)", group = grp)
+useLtf      = input.bool(true, "Пробовать LTF", group = grp)
+showWeak    = input.bool(true, "Мелкие точки фильтра", group = grp)
+showStrong  = input.bool(true, "ЛОНГ / ШОРТ", group = grp)
+showHelp    = input.bool(true, "Таблица-подсказка", group = grp)
 
-volSma = ta.sma(volume, 20)
-autoThr = volSma * autoMult
-buyThr = buyDeltaMin > 0 ? buyDeltaMin : autoThr
-sellThr = sellDeltaMin > 0 ? sellDeltaMin : autoThr
-
-ltfO = request.security_lower_tf(syminfo.tickerid, ltf, open)
-ltfH = request.security_lower_tf(syminfo.tickerid, ltf, high)
-ltfL = request.security_lower_tf(syminfo.tickerid, ltf, low)
-ltfC = request.security_lower_tf(syminfo.tickerid, ltf, close)
-ltfV = request.security_lower_tf(syminfo.tickerid, ltf, volume)
-
+// ── объём в верхней / нижней части бара ─────────────────────────────────
 f_split(o, h, l, c, v) =>
     rng = h - l
     float buy = 0.0
     float sell = 0.0
-    if na(v) or v <= 0
+    if na(v) or v <= 0 or na(rng) or rng <= 0
         buy := 0.0
         sell := 0.0
-    else if rng <= 0 or na(rng)
-        buy := c >= o ? v : 0.0
-        sell := c < o ? v : 0.0
     else
         buy := v * (c - l) / rng
         sell := v * (h - c) / rng
     [buy, sell]
 
-n = array.size(ltfC)
 float buyUp = 0.0
 float sellLo = 0.0
-float buyAll = 0.0
-float sellAll = 0.0
-mid = (high + low) / 2.0
-if n > 0
-    for i = 0 to n - 1
-        o = array.get(ltfO, i)
-        h = array.get(ltfH, i)
-        l = array.get(ltfL, i)
-        c = array.get(ltfC, i)
-        v = array.get(ltfV, i)
-        [b, s] = f_split(o, h, l, c, v)
-        buyAll += b
-        sellAll += s
-        px = (h + l) / 2.0
-        if px >= mid
-            buyUp += b
-        if px <= mid
-            sellLo += s
+bool ltfOk = false
+
+if useLtf
+    ltfO = request.security_lower_tf(syminfo.tickerid, ltf, open)
+    ltfH = request.security_lower_tf(syminfo.tickerid, ltf, high)
+    ltfL = request.security_lower_tf(syminfo.tickerid, ltf, low)
+    ltfC = request.security_lower_tf(syminfo.tickerid, ltf, close)
+    ltfV = request.security_lower_tf(syminfo.tickerid, ltf, volume)
+    n = array.size(ltfC)
+    mid = (high + low) / 2.0
+    if n > 0
+        ltfOk := true
+        for i = 0 to n - 1
+            [b, s] = f_split(array.get(ltfO, i), array.get(ltfH, i), array.get(ltfL, i), array.get(ltfC, i), array.get(ltfV, i))
+            px = (array.get(ltfH, i) + array.get(ltfL, i)) / 2.0
+            if px >= mid
+                buyUp += b
+            if px <= mid
+                sellLo += s
+
+// fallback: по теням текущей свечи (всегда есть данные)
+rng = high - low
+upperW = high - math.max(open, close)
+lowerW = math.min(open, close) - low
+if not ltfOk and rng > 0 and not na(volume)
+    buyUp := volume * upperW / rng
+    sellLo := volume * lowerW / rng
+
+// порог от истории самих метрик — чтобы на любой монете что-то зажигалось
+buyBase = ta.sma(buyUp, 20)
+sellBase = ta.sma(sellLo, 20)
+buyThr = nz(buyBase, buyUp) * sensitivity
+sellThr = nz(sellBase, sellLo) * sensitivity
+
+volSma = ta.sma(volume, 20)
+volOk = na(volSma) or volume >= volSma * 0.8
 
 isBear = close < open
 isBull = close > open
-volOk = volume >= volSma * needVolX
-swingLo = ta.lowest(low, swingLen)[1]
-swingHi = ta.highest(high, swingLen)[1]
-atLow = low <= swingLo
-atHigh = high >= swingHi
+swingLo = ta.lowest(low, 5)[1]
+swingHi = ta.highest(high, 5)[1]
 
-// Как фильтр в уроке:
-// BuyΔ сверху на медвежьей → шорт-идея
-// SellΔ снизу на бычьей → лонг-идея
-shortIdea = buyUp >= buyThr and isBear and volOk and (not onlyExtremes or atHigh)
-longIdea  = sellLo >= sellThr and isBull and volOk and (not onlyExtremes or atLow)
+// слабый фильтр (точки) — просто «в тени много»
+weakShort = buyUp > buyThr and upperW > rng * 0.15 and volOk
+weakLong  = sellLo > sellThr and lowerW > rng * 0.15 and volOk
 
-plotshape(longIdea, title = "ЛОНГ", style = shape.triangleup, location = location.belowbar, color = #0ECB81, size = size.normal, text = "ЛОНГ", textcolor = #0ECB81)
-plotshape(shortIdea, title = "ШОРТ", style = shape.triangledown, location = location.abovebar, color = #F6465D, size = size.normal, text = "ШОРТ", textcolor = #F6465D)
+// сильный — как идея урока + экстремум
+shortIdea = weakShort and isBear and high >= swingHi
+longIdea  = weakLong and isBull and low <= swingLo
 
-// Одна короткая метка на сигнале — БЕЗ радуги боксов на весь экран
-if longIdea
-    label.new(bar_index, low, "внизу продали много\n→ смотри лонг\nстоп под лоем", style = label.style_label_up, color = color.new(#0ECB81, 15), textcolor = color.white, size = size.small)
-if shortIdea
-    label.new(bar_index, high, "вверху купили много\n→ смотри шорт\nстоп над хаем", style = label.style_label_down, color = color.new(#F6465D, 15), textcolor = color.white, size = size.small)
+plotshape(showWeak and weakLong and not longIdea, title = "SellΔ низ", style = shape.circle, location = location.belowbar, color = color.new(#0ECB81, 40), size = size.tiny)
+plotshape(showWeak and weakShort and not shortIdea, title = "BuyΔ верх", style = shape.circle, location = location.abovebar, color = color.new(#F6465D, 40), size = size.tiny)
+plotshape(showStrong and longIdea, title = "ЛОНГ", style = shape.triangleup, location = location.belowbar, color = #0ECB81, size = size.normal, text = "ЛОНГ", textcolor = #0ECB81)
+plotshape(showStrong and shortIdea, title = "ШОРТ", style = shape.triangledown, location = location.abovebar, color = #F6465D, size = size.normal, text = "ШОРТ", textcolor = #F6465D)
 
-var table t = table.new(position.top_right, 1, 6, bgcolor = color.new(#0B0E11, 10), border_width = 1, border_color = #2B3139)
+bgcolor(longIdea ? color.new(#0ECB81, 90) : shortIdea ? color.new(#F6465D, 90) : na)
+
+var table t = table.new(position.top_right, 1, 7, bgcolor = color.new(#FFFFFF, 10), border_width = 1, border_color = #B7BDC6)
 if showHelp and barstate.islast
-    table.cell(t, 0, 0, "ЧТО УЧИЛ УРОК (03.03)", text_color = #F0B90B, text_size = size.normal)
-    table.cell(t, 0, 1, "1. M15 · кластеры / дельта в ТЕНИ свечи", text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, "2. Внизу огромные ПРОДАЖИ → лонг (поглотили)", text_color = #0ECB81, text_size = size.small)
-    table.cell(t, 0, 3, "3. Вверху огромные ПОКУПКИ → шорт (поглотили)", text_color = #F6465D, text_size = size.small)
-    table.cell(t, 0, 4, "4. Не каждый маркер = сделка. Сначала зона/ликвидность", text_color = #848E9C, text_size = size.small)
-    table.cell(t, 0, 5, "Сейчас Buy↑ " + str.tostring(buyUp, format.volume) + " / Sell↓ " + str.tostring(sellLo, format.volume) + " · порог ~" + str.tostring(buyThr, format.volume), text_color = #F0B90B, text_size = size.tiny)
+    mode = ltfOk ? "LTF ок" : "режим теней (LTF пуст)"
+    table.cell(t, 0, 0, "УРОК КЛАСТЕРЫ · " + mode, text_color = #F0B90B, text_size = size.normal)
+    table.cell(t, 0, 1, "Точка внизу = продажи в нижней тени", text_color = #0ECB81, text_size = size.small)
+    table.cell(t, 0, 2, "Точка вверху = покупки в верхней тени", text_color = #F6465D, text_size = size.small)
+    table.cell(t, 0, 3, "▲ ЛОНГ / ▼ ШОРТ = идея у хая/лоя", text_color = #181A20, text_size = size.small)
+    table.cell(t, 0, 4, "Buy↑ " + str.tostring(buyUp, format.volume) + "  порог " + str.tostring(buyThr, format.volume), text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 5, "Sell↓ " + str.tostring(sellLo, format.volume) + "  порог " + str.tostring(sellThr, format.volume), text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 6, "Чувств. " + str.tostring(sensitivity, "#.#") + " · если пусто — поставь 0.8", text_color = #F0B90B, text_size = size.tiny)
 
-alertcondition(longIdea, "Урок лонг", "SellΔ внизу у лоя — идея лонга")
-alertcondition(shortIdea, "Урок шорт", "BuyΔ вверху у хая — идея шорта")
+alertcondition(longIdea, "ЛОНГ", "SellΔ в нижней тени у лоя")
+alertcondition(shortIdea, "ШОРТ", "BuyΔ в верхней тени у хая")
