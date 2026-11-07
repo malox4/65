@@ -1,7 +1,7 @@
 //@version=6
-// 65 Map Algo CLEAN — график как без спама: только EMA + 1 сделка + карточки.
-// Логика SMC/Fib/Scalp считает внутри; метки BOS/CHoCH/Fib/OB по умолчанию ВЫКЛ.
-indicator("65 Map Algo CLEAN", overlay = true, max_boxes_count = 40, max_lines_count = 40, max_labels_count = 40)
+// 65 Map Algo — карта SMC мелкими метками (BOS/CHoCH/SW/OB) + скальп-сделка.
+// Короткие tiny-лейблы, чтобы зум не ломался. Fib/фигуры по умолчанию выкл.
+indicator("65 Map Algo", overlay = true, max_boxes_count = 80, max_lines_count = 80, max_labels_count = 80)
 
 // ── inputs ──────────────────────────────────────────────────────────────
 grpTrend = "Trend"
@@ -11,10 +11,10 @@ tf4h     = input.timeframe("240", "HTF 4h", group = grpTrend)
 
 grpSmc = "Smart Money"
 swingLen   = input.int(5, "Swing wing", minval = 2, maxval = 10, group = grpSmc)
-showLevels = input.bool(false, "Структурные уровни", group = grpSmc)
-showBos    = input.bool(false, "BOS / CHoCH", group = grpSmc)
-showOb     = input.bool(false, "Order Block", group = grpSmc)
-showSweep  = input.bool(false, "Снятие ликвидности", group = grpSmc)
+showLevels = input.bool(true, "Структурные уровни", group = grpSmc)
+showBos    = input.bool(true, "BOS / CHoCH", group = grpSmc)
+showOb     = input.bool(true, "Order Block", group = grpSmc)
+showSweep  = input.bool(true, "Снятие ликвидности", group = grpSmc)
 showFvg    = input.bool(false, "FVG имбаланс", group = grpSmc)
 fvgMinAtr  = input.float(0.25, "Мин FVG в ATR", minval = 0.05, step = 0.05, group = grpSmc)
 fvgMax     = input.int(5, "Макс FVG", minval = 1, maxval = 15, group = grpSmc)
@@ -79,7 +79,7 @@ confirmBars = input.int(12, "Окно ретеста после CHoCH/BOS", minv
 cooldown    = input.int(12, "Пауза между входами", minval = 4, group = grpEntry)
 rr          = input.float(2.0, "Цель в R (метки без алго)", group = grpEntry)
 atrLen      = input.int(14, "ATR", group = grpEntry)
-cleanChart = input.bool(true, "Чистый график (как без меток)", group = grpEntry, tooltip = "Вкл = только EMA + карточки + 1 активная сделка. BOS/Fib/OB/метки не рисуются, логика считается.")
+cleanChart = input.bool(false, "Только сделка (без карты)", group = grpEntry, tooltip = "Вкл = скрыть BOS/CHoCH/OB/Sweep. Выкл = карта мелкими метками + скальп.")
 modeSk = entryMode == "SK Fib"
 modeSmc = entryMode == "SMC+"
 modeAll = entryMode == "Всё"
@@ -104,7 +104,7 @@ trackOb = true
 trackFvg = true
 trackSweep = true
 fibLogicOn = true
-maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : maxHistTrades)
+maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : 5)
 
 // ── helpers ─────────────────────────────────────────────────────────────
 word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
@@ -263,10 +263,10 @@ if paintLevels and barstate.islast
         label.delete(lblLow)
     if not na(sh1)
         lvlHigh := line.new(clampBar(sh1Bar), sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
-        lblHigh := label.new(bar_index + 3, sh1, "уровень H\n" + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
+        lblHigh := label.new(bar_index + 3, sh1, "H " + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
     if not na(sl1)
         lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
-        lblLow := label.new(bar_index + 3, sl1, "уровень L\n" + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
+        lblLow := label.new(bar_index + 3, sl1, "L " + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
 
 if barstate.islast and not cleanChart
     table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
@@ -306,17 +306,17 @@ isBosDn = bosDn and not isChoChDn
 
 // карта всегда: CHoCH / BOS / снятие (алго-сделка рисуется отдельно)
 if paintBos and isBosUp
-    array.push(eventLabels, label.new(bar_index, low, "ПРОБОЙ BOS ↑", style = label.style_label_up, color = color.new(#26A69A, 10), textcolor = color.white, size = size.small))
-    trimLabels(eventLabels, 10)
+    array.push(eventLabels, label.new(bar_index, low, "BOS↑", style = label.style_label_up, color = color.new(#26A69A, 30), textcolor = color.white, size = size.tiny))
+    trimLabels(eventLabels, 8)
 if paintBos and isBosDn
-    array.push(eventLabels, label.new(bar_index, high, "ПРОБОЙ BOS ↓", style = label.style_label_down, color = color.new(#26A69A, 10), textcolor = color.white, size = size.small))
-    trimLabels(eventLabels, 10)
+    array.push(eventLabels, label.new(bar_index, high, "BOS↓", style = label.style_label_down, color = color.new(#26A69A, 30), textcolor = color.white, size = size.tiny))
+    trimLabels(eventLabels, 8)
 if paintBos and isChoChUp
-    array.push(eventLabels, label.new(bar_index, low, "СМЕНА CHoCH ↑\nбыл медвежий", style = label.style_label_up, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.small))
-    trimLabels(eventLabels, 10)
+    array.push(eventLabels, label.new(bar_index, low, "CHoCH↑", style = label.style_label_up, color = color.new(#F0B90B, 25), textcolor = color.black, size = size.tiny))
+    trimLabels(eventLabels, 8)
 if paintBos and isChoChDn
-    array.push(eventLabels, label.new(bar_index, high, "СМЕНА CHoCH ↓\nбыл бычий", style = label.style_label_down, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.small))
-    trimLabels(eventLabels, 10)
+    array.push(eventLabels, label.new(bar_index, high, "CHoCH↓", style = label.style_label_down, color = color.new(#F0B90B, 25), textcolor = color.black, size = size.tiny))
+    trimLabels(eventLabels, 8)
 
 if trackOb and (isBosUp or isChoChUp)
     [obi, obh, obl] = findBullOb()
@@ -325,7 +325,7 @@ if trackOb and (isBosUp or isChoChUp)
         array.push(obBots, obl)
         array.push(obTypes, 1)
         if paintOb
-            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#7C4DFF, 20), bgcolor = color.new(#7C4DFF, 78), border_width = 1, text = "OB", text_color = #B388FF, text_size = size.tiny))
+            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#7C4DFF, 55), bgcolor = color.new(#7C4DFF, 88), border_width = 1, text = "OB", text_color = #B388FF, text_size = size.tiny))
         trimZonePair(obTops, obBots, obTypes, obBoxes, paintOb ? math.min(obMax, 2) : 2)
 if trackOb and (isBosDn or isChoChDn)
     [obi, obh, obl] = findBearOb()
@@ -334,7 +334,7 @@ if trackOb and (isBosDn or isChoChDn)
         array.push(obBots, obl)
         array.push(obTypes, -1)
         if paintOb
-            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#D500F9, 15), bgcolor = color.new(#AA00FF, 75), border_width = 1, text = "OB", text_color = #E040FB, text_size = size.tiny))
+            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#D500F9, 55), bgcolor = color.new(#AA00FF, 88), border_width = 1, text = "OB", text_color = #E040FB, text_size = size.tiny))
         trimZonePair(obTops, obBots, obTypes, obBoxes, paintOb ? math.min(obMax, 2) : 2)
 
 if trackOb and array.size(obTypes) > 0
@@ -375,11 +375,11 @@ if array.size(obTypes) > 0
 sweepUp = ok and trackSweep and not na(sh1) and high > sh1 and close < sh1 and close < open
 sweepDn = ok and trackSweep and not na(sl1) and low < sl1 and close > sl1 and close > open
 if paintSweep and sweepUp
-    array.push(eventLabels, label.new(bar_index, high, "СНЯТИЕ ↑\nликвидность над " + str.tostring(sh1, format.mintick), style = label.style_label_down, color = color.new(#FF6D00, 10), textcolor = color.white, size = size.small))
-    trimLabels(eventLabels, 10)
+    array.push(eventLabels, label.new(bar_index, high, "SW↑", style = label.style_label_down, color = color.new(#FF6D00, 35), textcolor = color.white, size = size.tiny))
+    trimLabels(eventLabels, 8)
 if paintSweep and sweepDn
-    array.push(eventLabels, label.new(bar_index, low, "СНЯТИЕ ↓\nликвидность под " + str.tostring(sl1, format.mintick), style = label.style_label_up, color = color.new(#FF6D00, 10), textcolor = color.white, size = size.small))
-    trimLabels(eventLabels, 10)
+    array.push(eventLabels, label.new(bar_index, low, "SW↓", style = label.style_label_up, color = color.new(#FF6D00, 35), textcolor = color.white, size = size.tiny))
+    trimLabels(eventLabels, 8)
 
 bullGap = ok and trackFvg and low > high[2] and (low - high[2]) >= fvgMinAtr * atrV
 bearGap = ok and trackFvg and high < low[2] and (low[2] - high) >= fvgMinAtr * atrV
