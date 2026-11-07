@@ -67,9 +67,6 @@ limitBuy = hiVol and loPct >= wickPct and close > (high + low) / 2.0 and close >
 // лимит продавец: жирный объём + длинная верхняя тень + close в нижней половине
 limitSell = hiVol and upPct >= wickPct and close < (high + low) / 2.0 and close < open
 
-// усиление: рядом с объёмным уровнем
-nearPoc = not na(poc) and math.abs(close - poc) <= atr * 1.2
-
 float entry = na
 float stop = na
 float take = na
