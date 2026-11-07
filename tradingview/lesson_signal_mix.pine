@@ -19,7 +19,7 @@ volMult    = input.float(1.25, "Объём × SMA", minval = 1.0, step = 0.05, g
 showHist   = input.bool(true, "Мелкие метки прошлых сигналов", group = grp)
 leverage   = input.float(20.0, "Плечо (для % маржи в подписи)", minval = 1, step = 1, group = grp)
 
-grpM = "Модули (фон)"
+grpM = "Модули уроков (фон)"
 useSweep   = input.bool(true, "Свип (MATIC)", group = grpM)
 useBrake   = input.bool(true, "Тормозной бар", group = grpM)
 useTape    = input.bool(true, "Speed / плотность", group = grpM)
@@ -28,6 +28,21 @@ useTl      = input.bool(true, "Пробой трендовой", group = grpM)
 useZone    = input.bool(true, "Защита / пробой зоны", group = grpM)
 useOb      = input.bool(true, "ОБ импульс + ретест", group = grpM)
 useIb      = input.bool(true, "Слом инсайд-бара", group = grpM)
+
+grpOld = "Модули старого mix_map (фон)"
+useFib     = input.bool(true, "SK Fib 0.5–0.618", group = grpOld)
+useBos     = input.bool(true, "BOS/CHoCH ретест", group = grpOld)
+useFvg     = input.bool(true, "FVG fill", group = grpOld)
+useZ146    = input.bool(true, "Z146 уровень", group = grpOld)
+useEmaPb   = input.bool(true, "EMA откат по тренду", group = grpOld)
+useAsia    = input.bool(true, "Пробой Asian range", group = grpOld)
+useSqueeze = input.bool(true, "Пробой сжатия", group = grpOld)
+useDouble  = input.bool(true, "Двойное дно/вершина", group = grpOld)
+useSwRet   = input.bool(true, "Sweep + ретест (карта)", group = grpOld)
+fibPivot   = input.int(5, "Fib pivot", minval = 2, maxval = 15, group = grpOld)
+fibMinAtr  = input.float(2.0, "Fib мин импульс × ATR", minval = 0.5, step = 0.5, group = grpOld)
+sqBars     = input.int(12, "Сжатие: свечей", group = grpOld)
+sqAtrMult  = input.float(2.5, "Сжатие: ширина × ATR", group = grpOld)
 
 colGo = #0ECB81
 colStop = #F6465D
@@ -309,6 +324,394 @@ if ibDn
         drawY1S := motherLow
         drawY2S := motherHigh
 
+// ── старый mix_map: SK Fib / BOS / FVG / Z146 / EMA / Asia / фигуры ─────
+swingMap = 5
+sh1 = ta.highest(high[1], swingMap)
+sl1 = ta.lowest(low[1], swingMap)
+structure = emaF > emaS ? 1 : emaF < emaS ? -1 : 0
+
+// 9) SK Fib (mix_map)
+fibPh = ta.pivothigh(high, fibPivot, fibPivot)
+fibPl = ta.pivotlow(low, fibPivot, fibPivot)
+var float skA = na
+var float skB = na
+var int skABar = na
+var int skBBar = na
+var int skSide = 0
+var float skPullExt = na
+if useFib and not na(fibPh)
+    phPrice = high[fibPivot]
+    phBar = bar_index - fibPivot
+    if skSide == 1 and not na(skA) and phBar > skABar and phPrice > skA
+        skB := phPrice
+        skBBar := phBar
+        skPullExt := na
+    else if skSide == -1 and not na(skB)
+        skPullExt := na(skPullExt) ? phPrice : math.max(skPullExt, phPrice)
+    else if not (skSide == -1 and not na(skA) and na(skB) and phBar >= skABar and phPrice >= skA)
+        skA := phPrice
+        skABar := phBar
+        skB := na
+        skBBar := na
+        skSide := -1
+        skPullExt := na
+    else
+        skA := phPrice
+        skABar := phBar
+if useFib and not na(fibPl)
+    plPrice = low[fibPivot]
+    plBar = bar_index - fibPivot
+    if skSide == -1 and not na(skA) and plBar > skABar and plPrice < skA
+        if na(skB) or plPrice <= skB
+            skB := plPrice
+            skBBar := plBar
+            skPullExt := na
+    else if skSide == 1 and not na(skB)
+        skPullExt := na(skPullExt) ? plPrice : math.min(skPullExt, plPrice)
+    else if not (skSide == 1 and not na(skA) and na(skB) and plBar >= skABar and plPrice <= skA)
+        skA := plPrice
+        skABar := plBar
+        skB := na
+        skBBar := na
+        skSide := 1
+        skPullExt := na
+    else
+        skA := plPrice
+        skABar := plBar
+if useFib and skSide < 0 and not na(skA) and close > skA
+    skA := na
+    skB := na
+    skSide := 0
+    skPullExt := na
+if useFib and skSide > 0 and not na(skA) and close < skA
+    skA := na
+    skB := na
+    skSide := 0
+    skPullExt := na
+skRange = not na(skA) and not na(skB) ? math.abs(skA - skB) : na
+skReady = useFib and not na(skRange) and skRange >= fibMinAtr * atr and not na(skBBar) and bar_index > skBBar
+skDown = skReady and skSide < 0 and skB < skA
+skUp = skReady and skSide > 0 and skB > skA
+skZ0 = skDown ? skA - 0.5 * skRange : skUp ? skA + 0.5 * skRange : na
+skZ1 = skDown ? skA - 0.618 * skRange : skUp ? skA + 0.618 * skRange : na
+skZoneTop = not na(skZ0) and not na(skZ1) ? math.max(skZ0, skZ1) : na
+skZoneBot = not na(skZ0) and not na(skZ1) ? math.min(skZ0, skZ1) : na
+inSkShortZone = skDown and high >= skZoneBot and low <= skZoneTop
+inSkLongZone = skUp and low <= skZoneTop and high >= skZoneBot
+if skDown and inSkShortZone
+    skPullExt := na(skPullExt) ? high : math.max(skPullExt, high)
+if skUp and inSkLongZone
+    skPullExt := na(skPullExt) ? low : math.min(skPullExt, low)
+bearReversal = (close < open and close[1] > open[1] and close <= open[1]) or (rng > 0 and upW >= 50.0 and bodyPct <= 35.0)
+bullReversal = (close > open and close[1] < open[1] and close >= open[1]) or (rng > 0 and loW >= 50.0 and bodyPct <= 35.0)
+fibShortSig = skDown and inSkShortZone and close <= skZoneTop and bearReversal
+fibLongSig = skUp and inSkLongZone and close >= skZoneBot and bullReversal
+if fibLongSig
+    vLong += 1
+    whyL += "• SK Fib лонг\n"
+    sCand = math.min(nz(skPullExt, low), skZoneBot) - pad
+    stopL := na(stopL) ? sCand : math.min(stopL, sCand)
+    if drawL == 0
+        drawL := 9
+        drawY1L := skZoneBot
+        drawY2L := skZoneTop
+if fibShortSig
+    vShort += 1
+    whyS += "• SK Fib шорт\n"
+    sCand = math.max(nz(skPullExt, high), skZoneTop) + pad
+    stopS := na(stopS) ? sCand : math.max(stopS, sCand)
+    if drawS == 0
+        drawS := 9
+        drawY1S := skZoneBot
+        drawY2S := skZoneTop
+
+// 10) BOS/CHoCH → ретест (mix_map)
+bosUp = close > sh1 and close[1] <= sh1
+bosDn = close < sl1 and close[1] >= sl1
+var float pendLvl = na
+var int pendSide = 0
+var int pendBar = na
+if useBos and bosUp
+    pendLvl := sh1
+    pendSide := 1
+    pendBar := bar_index
+if useBos and bosDn
+    pendLvl := sl1
+    pendSide := -1
+    pendBar := bar_index
+bosRetLong = useBos and pendSide == 1 and not na(pendLvl) and not na(pendBar) and bar_index > pendBar and bar_index - pendBar <= 12 and low <= pendLvl and close > pendLvl and close > open
+bosRetShort = useBos and pendSide == -1 and not na(pendLvl) and not na(pendBar) and bar_index > pendBar and bar_index - pendBar <= 12 and high >= pendLvl and close < pendLvl and close < open
+if bosRetLong
+    vLong += 1
+    whyL += structure < 0 ? "• CHoCH↑ ретест\n" : "• BOS↑ ретест\n"
+    stopL := na(stopL) ? math.min(low, pendLvl) - pad : math.min(stopL, math.min(low, pendLvl) - pad)
+    if drawL == 0
+        drawL := 10
+        drawY1L := pendLvl
+        drawY2L := pendLvl
+if bosRetShort
+    vShort += 1
+    whyS += structure > 0 ? "• CHoCH↓ ретест\n" : "• BOS↓ ретест\n"
+    stopS := na(stopS) ? math.max(high, pendLvl) + pad : math.max(stopS, math.max(high, pendLvl) + pad)
+    if drawS == 0
+        drawS := 10
+        drawY1S := pendLvl
+        drawY2S := pendLvl
+
+// 11) FVG fill (mix_map, без спама боксов)
+bullGap = low > high[2] and (low - high[2]) >= 0.25 * atr
+bearGap = high < low[2] and (low[2] - high) >= 0.25 * atr
+var float fvgTop = na
+var float fvgBot = na
+var int fvgDir = 0
+var int fvgBar = na
+if useFvg and bullGap
+    fvgTop := low
+    fvgBot := high[2]
+    fvgDir := 1
+    fvgBar := bar_index
+if useFvg and bearGap
+    fvgTop := low[2]
+    fvgBot := high
+    fvgDir := -1
+    fvgBar := bar_index
+fvgAlive = useFvg and not na(fvgBar) and bar_index - fvgBar <= 30 and not na(fvgTop)
+inBullFvg = fvgAlive and fvgDir == 1 and low <= fvgTop and high >= fvgBot
+inBearFvg = fvgAlive and fvgDir == -1 and low <= fvgTop and high >= fvgBot
+if fvgAlive and fvgDir == 1 and low <= fvgBot
+    fvgDir := 0
+if fvgAlive and fvgDir == -1 and high >= fvgTop
+    fvgDir := 0
+fvgLong = inBullFvg and close > open
+fvgShort = inBearFvg and close < open
+if fvgLong
+    vLong += 1
+    whyL += "• FVG fill ↑\n"
+    stopL := na(stopL) ? fvgBot - pad : math.min(stopL, fvgBot - pad)
+    if drawL == 0
+        drawL := 11
+        drawY1L := fvgBot
+        drawY2L := fvgTop
+if fvgShort
+    vShort += 1
+    whyS += "• FVG fill ↓\n"
+    stopS := na(stopS) ? fvgTop + pad : math.max(stopS, fvgTop + pad)
+    if drawS == 0
+        drawS := 11
+        drawY1S := fvgBot
+        drawY2S := fvgTop
+
+// 12) Z146 (mix_map)
+var int z146Dir = 1
+var float zExt = high
+var int zExtI = 0
+var float zLastP = low
+var int zLastPi = 0
+var float zLvl = na
+var int zLvlSide = 0
+bool zPiv = false
+if useZ146
+    if z146Dir > 0
+        if high > zExt
+            zExt := high
+            zExtI := bar_index
+        else if zExt - low >= 1.5 * atr
+            zPiv := true
+    else
+        if low < zExt
+            zExt := low
+            zExtI := bar_index
+        else if high - zExt >= 1.5 * atr
+            zPiv := true
+    if zPiv
+        float zR = math.abs(zExt - zLastP)
+        if zR >= 4.0 * atr and (zExtI - zLastPi) <= 24 and zLastPi > 0
+            float zL = zLastP + z146Dir * 0.146 * zR
+            bool zPassed = (z146Dir > 0 and low <= zL) or (z146Dir < 0 and high >= zL)
+            if not zPassed
+                zLvl := zL
+                zLvlSide := z146Dir
+        zLastP := zExt
+        zLastPi := zExtI
+        z146Dir := -z146Dir
+        zExt := z146Dir > 0 ? high : low
+        zExtI := bar_index
+z146Long = useZ146 and not na(zLvl) and zLvlSide > 0 and low <= zLvl and close > zLvl and close > open
+z146Short = useZ146 and not na(zLvl) and zLvlSide < 0 and high >= zLvl and close < zLvl and close < open
+if z146Long
+    vLong += 1
+    whyL += "• Z146\n"
+    stopL := na(stopL) ? math.min(low, zLvl) - pad : math.min(stopL, math.min(low, zLvl) - pad)
+    if drawL == 0
+        drawL := 12
+        drawY1L := zLvl
+        drawY2L := zLvl
+if z146Short
+    vShort += 1
+    whyS += "• Z146\n"
+    stopS := na(stopS) ? math.max(high, zLvl) + pad : math.max(stopS, math.max(high, zLvl) + pad)
+    if drawS == 0
+        drawS := 12
+        drawY1S := zLvl
+        drawY2S := zLvl
+
+// 13) EMA откат
+emaLong = useEmaPb and htfLong and low <= emaF and close > emaF and close > open
+emaShort = useEmaPb and htfShort and high >= emaF and close < emaF and close < open
+if emaLong
+    vLong += 1
+    whyL += "• EMA откат ↑\n"
+    stopL := na(stopL) ? math.min(low, emaF) - pad : math.min(stopL, math.min(low, emaF) - pad)
+    if drawL == 0
+        drawL := 13
+        drawY1L := emaF
+        drawY2L := emaF
+if emaShort
+    vShort += 1
+    whyS += "• EMA откат ↓\n"
+    stopS := na(stopS) ? math.max(high, emaF) + pad : math.max(stopS, math.max(high, emaF) + pad)
+    if drawS == 0
+        drawS := 13
+        drawY1S := emaF
+        drawY2S := emaF
+
+// 14) Asian range
+asiaHour = hour(time, "UTC")
+inAsia = asiaHour >= 0 and asiaHour < 8
+var float asiaHi = na
+var float asiaLo = na
+var int asiaDay = na
+curDay = dayofmonth(time, "UTC")
+if useAsia and (na(asiaDay) or curDay != asiaDay)
+    asiaDay := curDay
+    asiaHi := na
+    asiaLo := na
+if useAsia and inAsia
+    asiaHi := na(asiaHi) ? high : math.max(asiaHi, high)
+    asiaLo := na(asiaLo) ? low : math.min(asiaLo, low)
+asiaLong = useAsia and not inAsia and not na(asiaHi) and not na(asiaLo) and asiaHi > asiaLo and close > asiaHi and close[1] <= asiaHi
+asiaShort = useAsia and not inAsia and not na(asiaHi) and not na(asiaLo) and asiaHi > asiaLo and close < asiaLo and close[1] >= asiaLo
+if asiaLong
+    vLong += 1
+    whyL += "• Asian break ↑\n"
+    stopL := na(stopL) ? asiaLo - pad : math.min(stopL, asiaLo - pad)
+    if drawL == 0
+        drawL := 14
+        drawY1L := asiaLo
+        drawY2L := asiaHi
+if asiaShort
+    vShort += 1
+    whyS += "• Asian break ↓\n"
+    stopS := na(stopS) ? asiaHi + pad : math.max(stopS, asiaHi + pad)
+    if drawS == 0
+        drawS := 14
+        drawY1S := asiaLo
+        drawY2S := asiaHi
+
+// 15) Сжатие
+sqHigh = ta.highest(high, sqBars)
+sqLow = ta.lowest(low, sqBars)
+inSqueeze = (sqHigh - sqLow) <= sqAtrMult * atr and (sqHigh - sqLow) > 0
+sqUp = useSqueeze and inSqueeze[1] and close > sqHigh[1] and close[1] <= sqHigh[1]
+sqDn = useSqueeze and inSqueeze[1] and close < sqLow[1] and close[1] >= sqLow[1]
+if sqUp
+    vLong += 1
+    whyL += "• пробой сжатия ↑\n"
+    stopL := na(stopL) ? sqLow[1] - pad : math.min(stopL, sqLow[1] - pad)
+    if drawL == 0
+        drawL := 15
+        drawY1L := sqLow[1]
+        drawY2L := sqHigh[1]
+if sqDn
+    vShort += 1
+    whyS += "• пробой сжатия ↓\n"
+    stopS := na(stopS) ? sqHigh[1] + pad : math.max(stopS, sqHigh[1] + pad)
+    if drawS == 0
+        drawS := 15
+        drawY1S := sqLow[1]
+        drawY2S := sqHigh[1]
+
+// 16) Двойное дно/вершина
+var float p1L = na
+var float p2L = na
+var int p1Lb = na
+var int p2Lb = na
+var float p1H = na
+var float p2H = na
+var int p1Hb = na
+var int p2Hb = na
+var float neckL = na
+var float neckH = na
+var float extL = na
+var float extH = na
+if useDouble and not na(pl)
+    p1L := p2L
+    p1Lb := p2Lb
+    p2L := pl
+    p2Lb := bar_index - pivotLen
+    if not na(p1L) and not na(p2L) and not na(p1Lb) and p2Lb - p1Lb >= 8 and p2Lb - p1Lb <= 60 and math.abs(p2L - p1L) <= 0.35 * atr
+        neckL := ta.highest(high, math.min(60, math.max(1, bar_index - p1Lb)))
+        extL := math.min(p1L, p2L)
+if useDouble and not na(ph)
+    p1H := p2H
+    p1Hb := p2Hb
+    p2H := ph
+    p2Hb := bar_index - pivotLen
+    if not na(p1H) and not na(p2H) and not na(p1Hb) and p2Hb - p1Hb >= 8 and p2Hb - p1Hb <= 60 and math.abs(p2H - p1H) <= 0.35 * atr
+        neckH := ta.lowest(low, math.min(60, math.max(1, bar_index - p1Hb)))
+        extH := math.max(p1H, p2H)
+dblUp = useDouble and not na(neckL) and not na(extL) and close > neckL and close[1] <= neckL and neckL - extL >= atr
+dblDn = useDouble and not na(neckH) and not na(extH) and close < neckH and close[1] >= neckH and extH - neckH >= atr
+if dblUp
+    vLong += 1
+    whyL += "• двойное дно\n"
+    stopL := na(stopL) ? extL - pad : math.min(stopL, extL - pad)
+    if drawL == 0
+        drawL := 16
+        drawY1L := extL
+        drawY2L := neckL
+if dblDn
+    vShort += 1
+    whyS += "• двойная вершина\n"
+    stopS := na(stopS) ? extH + pad : math.max(stopS, extH + pad)
+    if drawS == 0
+        drawS := 16
+        drawY1S := neckH
+        drawY2S := extH
+
+// 17) Sweep карты + ретест
+var float mapSweepLvl = na
+var int mapSweepSide = 0
+var int mapSweepBar = na
+mapSwUp = useSwRet and high > sh1 and close < sh1 and close < open
+mapSwDn = useSwRet and low < sl1 and close > sl1 and close > open
+if mapSwUp
+    mapSweepLvl := sh1
+    mapSweepSide := -1
+    mapSweepBar := bar_index
+if mapSwDn
+    mapSweepLvl := sl1
+    mapSweepSide := 1
+    mapSweepBar := bar_index
+swRetLong = useSwRet and mapSweepSide == 1 and not na(mapSweepLvl) and not na(mapSweepBar) and bar_index > mapSweepBar and bar_index - mapSweepBar <= 12 and low <= mapSweepLvl and close > mapSweepLvl and close > open
+swRetShort = useSwRet and mapSweepSide == -1 and not na(mapSweepLvl) and not na(mapSweepBar) and bar_index > mapSweepBar and bar_index - mapSweepBar <= 12 and high >= mapSweepLvl and close < mapSweepLvl and close < open
+if swRetLong
+    vLong += 1
+    whyL += "• sweep-ретест ↑\n"
+    stopL := na(stopL) ? mapSweepLvl - pad : math.min(stopL, mapSweepLvl - pad)
+    if drawL == 0
+        drawL := 17
+        drawY1L := mapSweepLvl
+        drawY2L := mapSweepLvl
+if swRetShort
+    vShort += 1
+    whyS += "• sweep-ретест ↓\n"
+    stopS := na(stopS) ? mapSweepLvl + pad : math.max(stopS, mapSweepLvl + pad)
+    if drawS == 0
+        drawS := 17
+        drawY1S := mapSweepLvl
+        drawY2S := mapSweepLvl
+
 // ── конфлюенс ──────────────────────────────────────────────────────────
 rawLong = vLong >= minVotes and vLong > vShort and htfLong and not na(stopL) and close > stopL
 rawShort = vShort >= minVotes and vShort > vLong and htfShort and not na(stopS) and close < stopS
@@ -521,17 +924,19 @@ if barstate.islast
         lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick) + " (−" + str.tostring(pxPct(entry, stop), "#.##") + "%)", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
         lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick) + " (+" + str.tostring(pct, "#.##") + "%)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
 
-        // рисунок причины
+        // рисунок причины (зона / уровень / трендовая / тень)
         b0 = nz(bornMem, bar_index)
         if drawCode == 5 and side == 1 and not na(hb2Mem) and not na(h2Mem) and not na(dY2)
             lnWhy := line.new(hb2Mem, h2Mem, b0, dY2, color = color.new(colTp, 10), width = 3)
         else if drawCode == 5 and side == -1 and not na(lb2Mem) and not na(l2Mem) and not na(dY2)
             lnWhy := line.new(lb2Mem, l2Mem, b0, dY2, color = color.new(colStop, 10), width = 3)
-        else if (drawCode == 6 or drawCode == 7 or drawCode == 8) and not na(dY1) and not na(dY2)
-            bxWhy := box.new(math.max(b0 - 8, b0 - 20), math.max(dY1, dY2), b0 + 2, math.min(dY1, dY2), bgcolor = color.new(colWhy, 85), border_color = colWhy, border_width = 2)
-        else if not na(dY1) and not na(dY2)
-            lnWhy := line.new(b0, dY1, b0, dY2, color = color.new(colWhy, 0), width = 4)
-            bxWhy := box.new(b0 - 1, math.max(dY1, dY2), b0 + 1, math.min(dY1, dY2), bgcolor = color.new(colWhy, 80), border_color = colWhy)
+        else if (drawCode == 6 or drawCode == 7 or drawCode == 8 or drawCode == 9 or drawCode == 11 or drawCode == 14 or drawCode == 15 or drawCode == 16) and not na(dY1) and not na(dY2) and math.abs(dY1 - dY2) > syminfo.mintick
+            bxWhy := box.new(math.max(b0 - 12, b0 - 25), math.max(dY1, dY2), b0 + 2, math.min(dY1, dY2), bgcolor = color.new(drawCode == 9 ? #8B5CF6 : colWhy, 85), border_color = drawCode == 9 ? #8B5CF6 : colWhy, border_width = 2)
+        else if not na(dY1)
+            y2 = na(dY2) ? dY1 : dY2
+            lnWhy := line.new(b0 - 2, dY1, x2, y2, color = color.new(colWhy, 0), width = 2, style = line.style_dashed)
+            if math.abs(dY1 - y2) <= syminfo.mintick
+                bxWhy := box.new(b0 - 1, dY1 + atr * 0.05, b0 + 1, dY1 - atr * 0.05, bgcolor = color.new(colWhy, 80), border_color = colWhy)
 
     // последние 3 конфлюенс-итога компактно
     if showHist and array.size(exBi) > 0
