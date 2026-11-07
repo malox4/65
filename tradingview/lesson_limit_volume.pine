@@ -6,8 +6,9 @@ indicator("Урок · Лимит+Объём", overlay = true, max_lines_count =
 grp = "План"
 lookback = input.int(48, "Окно профиля (баров)", minval = 20, maxval = 200, group = grp)
 vaPct    = input.float(70.0, "Value Area %", minval = 50, maxval = 90, step = 5, group = grp)
-volMult  = input.float(1.8, "Мин. объём × SMA", minval = 1.0, step = 0.1, group = grp)
-wickPct  = input.float(45.0, "Мин. тень % диапазона", minval = 25, maxval = 80, group = grp)
+volMult  = input.float(1.4, "Мин. объём × SMA", minval = 1.0, step = 0.1, group = grp)
+wickPct  = input.float(35.0, "Мин. тень % диапазона", minval = 25, maxval = 80, group = grp)
+showHist = input.bool(true, "Показать примеры на старых свечах", group = grp)
 tpR      = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
 slPad    = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
 liveAtr  = input.float(0.4, "СЕЙЧАС если цена ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
@@ -142,6 +143,10 @@ else
 nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+
+// примеры на истории (не план сделки — только метки «вот такие свечи»)
+plotshape(showHist and limitBuy, title = "Пример лимит покупатель", style = shape.triangleup, location = location.belowbar, color = colBuy, size = size.tiny, text = "ЛИМ.ПОКУП", textcolor = colBuy)
+plotshape(showHist and limitSell, title = "Пример лимит продавец", style = shape.triangledown, location = location.abovebar, color = colSell, size = size.tiny, text = "ЛИМ.ПРОДАВ", textcolor = colSell)
 
 // ——— рисунок ———
 var line lnPoc = na
