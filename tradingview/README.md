@@ -4,12 +4,12 @@
 
 Разметка: **уровень → событие → фигура → потенциальная свеча / вход**. Не сигнал бота и не обещание прибыли.
 
-## Полный плейбук проекта (бот + карта + уроки)
+## Книга по урокам «10 поток» (без бумажного бота)
 
-Не только уроки потока: **микс A+B+C**, исследование 58 семейств, SMC/`plan`, реальные скрины UI и учебные Pine.
+Учебный текст: ордера → ликвидность → ОБ → поток → защита уровня → сессии + живые кейсы.
 
-→ [`docs/SYSTEM_PLAYBOOK.md`](../docs/SYSTEM_PLAYBOOK.md)  
-Скрины: `assets/screens/01-chart-bch.png` … `04-plan-card.png`, инфографика `infographic_*.png`.
+→ [`docs/TRADING_BOOK_10_POTOK.md`](../docs/TRADING_BOOK_10_POTOK.md)  
+Схемы: `assets/screens/book_chapter_map.png`, `book_day_checklist.png`, `pepe_limit_annotated.png`.
 
 ## Урок · ОБ + Инсайд (`ob_inside_lesson.pine`)
 
