@@ -69,6 +69,15 @@ htfShort = not needHtf or emaF < emaS
 pad = slPad * atr
 
 pxPct(e, px) => e != 0 ? math.abs(px - e) / e * 100.0 : 0.0
+barMinutes() => math.max(timeframe.in_seconds() / 60.0, 1.0)
+// примерно: сколько минут ждать до цели при темпе ~1 ATR / свеча (оценка, не гарантия)
+etaMinutes(fromPx, toPx) =>
+    float dist = math.abs(toPx - fromPx)
+    float pace = math.max(atr, fromPx * 0.00005)
+    int barsEta = int(math.max(1, math.ceil(dist / pace)))
+    barsEta * barMinutes()
+fmtWait(m) =>
+    m < 60 ? "~" + str.tostring(m, "#") + " мин" : m < 1440 ? "~" + str.tostring(m / 60.0, "#.#") + " ч" : "~" + str.tostring(m / 1440.0, "#.#") + " д"
 
 // ── модули: каждый даёт vote ±1, stop-кандидат, why, draw-тип ─────────
 int vLong = 0
@@ -1034,21 +1043,25 @@ if barstate.islast
         pct2 = pxPct(entry, take2)
         pct3 = pxPct(entry, take3)
         marg2 = pct2 * leverage
+        wait1 = fmtWait(etaMinutes(entry, take1))
+        wait2 = fmtWait(etaMinutes(entry, take2))
+        wait3 = fmtWait(etaMinutes(entry, take3))
+        waitSl = fmtWait(etaMinutes(entry, stop))
         b0 = nz(bornMem, bar_index)
-        // полосы позиции: риск + каждый тейк отдельно
-        bxRisk := box.new(b0, math.max(entry, stop), x2, math.min(entry, stop), bgcolor = color.new(colStop, 88), border_color = color.new(colStop, 40), border_width = 1, text = "РИСК", text_color = colStop, text_size = size.tiny)
+        // полосы позиции: риск + каждый тейк отдельно (+ время)
+        bxRisk := box.new(b0, math.max(entry, stop), x2, math.min(entry, stop), bgcolor = color.new(colStop, 88), border_color = color.new(colStop, 40), border_width = 1, text = "РИСК · " + waitSl, text_color = colStop, text_size = size.tiny)
         if side == 1
-            bxTp1 := box.new(b0, take1, x2, entry, bgcolor = color.new(colGo, 92), border_color = color.new(colGo, 50), border_width = 1, text = "TP1 " + str.tostring(tp1R, "#.#") + "R", text_color = colGo, text_size = size.tiny)
-            bxTp2 := box.new(b0, take2, x2, take1, bgcolor = color.new(colTp, 90), border_color = color.new(colTp, 40), border_width = 1, text = "TP2 " + str.tostring(tp2R, "#.#") + "R", text_color = colTp, text_size = size.tiny)
-            bxTp3 := box.new(b0, take3, x2, take2, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R", text_color = #A78BFA, text_size = size.tiny)
+            bxTp1 := box.new(b0, take1, x2, entry, bgcolor = color.new(colGo, 92), border_color = color.new(colGo, 50), border_width = 1, text = "TP1 " + str.tostring(tp1R, "#.#") + "R · " + wait1, text_color = colGo, text_size = size.tiny)
+            bxTp2 := box.new(b0, take2, x2, take1, bgcolor = color.new(colTp, 90), border_color = color.new(colTp, 40), border_width = 1, text = "TP2 " + str.tostring(tp2R, "#.#") + "R · " + wait2, text_color = colTp, text_size = size.tiny)
+            bxTp3 := box.new(b0, take3, x2, take2, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R · " + wait3, text_color = #A78BFA, text_size = size.tiny)
         else
-            bxTp1 := box.new(b0, entry, x2, take1, bgcolor = color.new(colGo, 92), border_color = color.new(colGo, 50), border_width = 1, text = "TP1 " + str.tostring(tp1R, "#.#") + "R", text_color = colGo, text_size = size.tiny)
-            bxTp2 := box.new(b0, take1, x2, take2, bgcolor = color.new(colTp, 90), border_color = color.new(colTp, 40), border_width = 1, text = "TP2 " + str.tostring(tp2R, "#.#") + "R", text_color = colTp, text_size = size.tiny)
-            bxTp3 := box.new(b0, take2, x2, take3, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R", text_color = #A78BFA, text_size = size.tiny)
+            bxTp1 := box.new(b0, entry, x2, take1, bgcolor = color.new(colGo, 92), border_color = color.new(colGo, 50), border_width = 1, text = "TP1 " + str.tostring(tp1R, "#.#") + "R · " + wait1, text_color = colGo, text_size = size.tiny)
+            bxTp2 := box.new(b0, take1, x2, take2, bgcolor = color.new(colTp, 90), border_color = color.new(colTp, 40), border_width = 1, text = "TP2 " + str.tostring(tp2R, "#.#") + "R · " + wait2, text_color = colTp, text_size = size.tiny)
+            bxTp3 := box.new(b0, take2, x2, take3, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R · " + wait3, text_color = #A78BFA, text_size = size.tiny)
 
-        lbMain := label.new(x2, entry, sideTxt + "\nсовпадений: " + str.tostring(votes) + "\nTP2 +" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R · маржа~" + str.tostring(marg2, "#.#") + "%", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lbMain := label.new(x2, entry, sideTxt + "\nсовпадений: " + str.tostring(votes) + "\nTP2 +" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R · маржа~" + str.tostring(marg2, "#.#") + "%\nждать TP1 " + wait1 + " · TP2 " + wait2 + " · TP3 " + wait3, style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
         midPos = (entry + take2) / 2.0
-        lbPos := label.new(b0, midPos, "ПОЗИЦИЯ\nстоп → TP1 → TP2 → TP3", style = label.style_label_left, color = color.new(#1E2329, 10), textcolor = color.white, size = size.small)
+        lbPos := label.new(b0, midPos, "ПОЗИЦИЯ\nстоп → TP1 → TP2 → TP3\nждать ≈ " + wait1 + " / " + wait2 + " / " + wait3, style = label.style_label_left, color = color.new(#1E2329, 10), textcolor = color.white, size = size.small)
         // текст ПОЧЕМУ у первой нарисованной причины (или у входа)
         whyY = take3
         lbWhy := label.new(math.max(0, b0 - 2), whyY, "ПОЧЕМУ:\n" + why, style = label.style_label_right, color = color.new(#1E2329, 0), textcolor = color.white, size = size.normal)
@@ -1060,11 +1073,11 @@ if barstate.islast
         lnT3 := line.new(b0, take3, x2, take3, color = #8B5CF6, width = 2, style = line.style_dashed)
         lnPath := line.new(b0, entry, x2, take3, color = color.new(col, 30), width = 2)
 
-        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
-        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick) + " (−" + str.tostring(pxPct(entry, stop), "#.##") + "%)", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
-        lbT1 := label.new(x2, take1, "3 ТЕЙК1 " + str.tostring(take1, format.mintick) + " (+" + str.tostring(pct1, "#.##") + "% · " + str.tostring(tp1R, "#.#") + "R)", style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
-        lbT2 := label.new(x2, take2, "4 ТЕЙК2 " + str.tostring(take2, format.mintick) + " (+" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
-        lbT3 := label.new(x2, take3, "5 ТЕЙК3 " + str.tostring(take3, format.mintick) + " (+" + str.tostring(pct3, "#.##") + "% · " + str.tostring(tp3R, "#.#") + "R)", style = label.style_label_left, color = #8B5CF6, textcolor = color.white, size = size.normal)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick) + "\nсейчас", style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick) + " (−" + str.tostring(pxPct(entry, stop), "#.##") + "%)\nесли против ≈ " + waitSl, style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
+        lbT1 := label.new(x2, take1, "3 ТЕЙК1 " + str.tostring(take1, format.mintick) + "\n+" + str.tostring(pct1, "#.##") + "% · " + str.tostring(tp1R, "#.#") + "R · ждать " + wait1, style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
+        lbT2 := label.new(x2, take2, "4 ТЕЙК2 " + str.tostring(take2, format.mintick) + "\n+" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R · ждать " + wait2, style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+        lbT3 := label.new(x2, take3, "5 ТЕЙК3 " + str.tostring(take3, format.mintick) + "\n+" + str.tostring(pct3, "#.##") + "% · " + str.tostring(tp3R, "#.#") + "R · ждать " + wait3, style = label.style_label_left, color = #8B5CF6, textcolor = color.white, size = size.normal)
 
         // РИСУЕМ КАЖДУЮ причину из ПОЧЕМУ (не только первую)
         if array.size(whyTopA) > 0
@@ -1104,9 +1117,9 @@ if barstate.islast
     big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "LATE" ? "ОПОЗДАЛ" : status == "WAIT_FILL" ? "жди цену" : "ЖДИ"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
     table.cell(t, 0, 1, haveSig ? ("вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick)) : ("микс · нужно ≥" + str.tostring(minVotes) + " · L" + str.tostring(vLong) + "/S" + str.tostring(vShort)), text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, haveSig ? ("ТЕЙК1 " + str.tostring(take1, format.mintick) + " · +" + str.tostring(pxPct(entry, take1), "#.##") + "%") : "—", text_color = colGo, text_size = size.small)
-    table.cell(t, 0, 3, haveSig ? ("ТЕЙК2 " + str.tostring(take2, format.mintick) + " · +" + str.tostring(pxPct(entry, take2), "#.##") + "%") : "—", text_color = colTp, text_size = size.small)
-    table.cell(t, 0, 4, haveSig ? ("ТЕЙК3 " + str.tostring(take3, format.mintick) + " · +" + str.tostring(pxPct(entry, take3), "#.##") + "%") : "позиция: риск + TP1/2/3", text_color = #A78BFA, text_size = size.small)
+    table.cell(t, 0, 2, haveSig ? ("ТЕЙК1 +" + str.tostring(pxPct(entry, take1), "#.##") + "% · ждать " + fmtWait(etaMinutes(entry, take1))) : "—", text_color = colGo, text_size = size.small)
+    table.cell(t, 0, 3, haveSig ? ("ТЕЙК2 +" + str.tostring(pxPct(entry, take2), "#.##") + "% · ждать " + fmtWait(etaMinutes(entry, take2))) : "—", text_color = colTp, text_size = size.small)
+    table.cell(t, 0, 4, haveSig ? ("ТЕЙК3 +" + str.tostring(pxPct(entry, take3), "#.##") + "% · ждать " + fmtWait(etaMinutes(entry, take3))) : "оценка времени ≈ по ATR/ТФ", text_color = #A78BFA, text_size = size.small)
 
 fireLong = haveSig and bar_index == bornMem and side == 1
 fireShort = haveSig and bar_index == bornMem and side == -1
