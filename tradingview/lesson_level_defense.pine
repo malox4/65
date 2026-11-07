@@ -1,6 +1,6 @@
 //@version=6
-// Урок 08.03: ОДИН план — серая зона → либо ЗАЩИТА (отбой), либо ПРОБОЙ (ушла за зону).
-// Без спама треугольников. Один вход, один стоп, один тейк.
+// Урок 08.03: зона → ЗАЩИТА (отбой от края) или ПРОБОЙ (вход НА краю зоны, не «в воздухе»).
+// Если цена уже далеко от входа — «ОПОЗДАЛ», не догоняй.
 indicator("Урок · Защита уровня", overlay = true, max_lines_count = 20, max_boxes_count = 5, max_labels_count = 20)
 
 grp = "План"
@@ -9,17 +9,18 @@ zoneAtr  = input.float(0.35, "Толщина зоны × ATR", minval = 0.1, ste
 nearAtr  = input.float(0.6, "У зоны если ≤ ATR×", minval = 0.2, step = 0.1, group = grp)
 tpR      = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
 slPad    = input.float(0.15, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
+chaseAtr = input.float(1.0, "Опоздал если цена ушла > ATR× от входа", minval = 0.3, step = 0.1, group = grp)
 atrLen   = input.int(14, "ATR", group = grp)
 holdBars = input.int(25, "Держать план (свечей)", minval = 5, maxval = 60, group = grp)
 needEng  = input.bool(true, "Защите нужно поглощение", group = grp)
-showPoc  = input.bool(false, "Показать POC D1 (только ориентир, не тейк)", group = grp)
 
-colZone  = #848E9C
-colDef   = #0ECB81
-colBrk   = #F0B90B
-colStop  = #F6465D
-colTp    = #3B82F6
-colWait  = #848E9C
+colZone = #848E9C
+colDef  = #0ECB81
+colBrk  = #F0B90B
+colStop = #F6465D
+colTp   = #3B82F6
+colWait = #848E9C
+colLate = #F6465D
 
 atr = ta.atr(atrLen)
 ph  = ta.pivothigh(high, swingLen, swingLen)
@@ -27,16 +28,14 @@ pl  = ta.pivotlow(low, swingLen, swingLen)
 bullEng = close > open and close > high[1] and open <= low[1]
 bearEng = close < open and close < low[1] and open >= high[1]
 
-pocD1 = showPoc ? request.security(syminfo.tickerid, "D", ta.valuewhen(volume == ta.highest(volume, 30), close, 0), lookahead = barmerge.lookahead_off) : na
-
 var float zTop = na
 var float zBot = na
 var float zMid = na
-var int   zDir = 0       // 1 = зона сверху (сопр.), -1 = снизу (подд.)
+var int   zDir = 0
 var int   zBorn = na
-var int   phase = 0      // 0 нет, 1 жди, 2 защита, 3 пробой
+var int   phase = 0      // 0 нет, 1 жди, 2 защита, 3 пробой, 4 опоздал
 var int   armed = na
-var int   side = 0       // 1 long, -1 short
+var int   side = 0
 var float entry = na
 var float stop = na
 var float take = na
@@ -45,13 +44,12 @@ var string mode = ""
 half = zoneAtr * atr
 pad  = slPad * atr
 
-// новая зона — только в ожидании или если план протух
-planDead = phase >= 2 and not na(armed) and bar_index - armed > holdBars
-canNew   = phase == 0 or phase == 1 or planDead
+planDead = (phase >= 2) and not na(armed) and bar_index - armed > holdBars
+canNew   = phase == 0 or phase == 1 or phase == 4 or planDead
 
 if not na(ph) and canNew
     preferHi = na(zMid) or math.abs(close - ph) <= math.abs(close - nz(zMid))
-    if preferHi or phase == 0 or planDead
+    if preferHi or phase == 0 or phase == 4 or planDead
         zMid := ph
         zTop := ph + half
         zBot := ph - half
@@ -67,7 +65,7 @@ if not na(ph) and canNew
 
 if not na(pl) and canNew
     preferLo = na(zMid) or math.abs(close - pl) < math.abs(close - nz(zMid))
-    if preferLo or phase == 0 or planDead
+    if preferLo or phase == 0 or phase == 4 or planDead
         zMid := pl
         zTop := pl + half
         zBot := pl - half
@@ -83,11 +81,10 @@ if not na(pl) and canNew
 
 near = not na(zTop) and close <= zTop + nearAtr * atr and close >= zBot - nearAtr * atr
 
-// ——— ЗАЩИТА: отбой от зоны ———
+// ЗАЩИТА: вход НА зоне (середина), не «где close оказался потом»
 if phase == 1 and near
-    // поддержка → лонг
     if zDir == -1 and low <= zTop and close > zMid and close > open and (not needEng or bullEng)
-        e = close
+        e = zMid
         s = zBot - pad
         r = e - s
         if r > 0
@@ -98,9 +95,8 @@ if phase == 1 and near
             stop := s
             take := e + tpR * r
             mode := "ЗАЩИТА"
-    // сопротивление → шорт
     if phase == 1 and zDir == 1 and high >= zBot and close < zMid and close < open and (not needEng or bearEng)
-        e = close
+        e = zMid
         s = zTop + pad
         r = s - e
         if r > 0
@@ -112,10 +108,11 @@ if phase == 1 and near
             take := e - tpR * r
             mode := "ЗАЩИТА"
 
-// ——— ПРОБОЙ: ушла за зону ———
+// ПРОБОЙ: вход НА краю зоны (где сломали), не на mid-air close
 if phase == 1 and not na(zBot)
+    // ушла под поддержку → шорт от НИЗА зоны
     if zDir == -1 and close < zBot and close[1] >= zBot
-        e = close
+        e = zBot
         s = zTop + pad
         r = s - e
         if r > 0
@@ -126,8 +123,9 @@ if phase == 1 and not na(zBot)
             stop := s
             take := e - tpR * r
             mode := "ПРОБОЙ"
+    // ушла над сопротивление → лонг от ВЕРХА зоны
     if phase == 1 and zDir == 1 and close > zTop and close[1] <= zTop
-        e = close
+        e = zTop
         s = zBot - pad
         r = e - s
         if r > 0
@@ -139,8 +137,14 @@ if phase == 1 and not na(zBot)
             take := e + tpR * r
             mode := "ПРОБОЙ"
 
-// протух / стоп-тейк достигнуты → сброс
-if phase >= 2 and not na(armed)
+// опоздал: цена уже далеко от входа в сторону сделки — не догонять
+if (phase == 2 or phase == 3) and not na(entry) and not na(atr)
+    tooFar = side == 1 ? (close - entry) > chaseAtr * atr : (entry - close) > chaseAtr * atr
+    if tooFar
+        phase := 4
+        mode := "ОПОЗДАЛ"
+
+if phase >= 2 and phase != 4 and not na(armed)
     dead = bar_index - armed > holdBars
     hitSl = side == 1 ? close < stop : close > stop
     hitTp = side == 1 ? high >= take : low <= take
@@ -153,19 +157,16 @@ if phase >= 2 and not na(armed)
         take := na
         mode := ""
 
-// ——— РИСОВАНИЕ: только текущий план, без истории ———
 var line lnTop = na
 var line lnBot = na
 var line lnE = na
 var line lnS = na
 var line lnT = na
-var line lnPoc = na
 var box bx = na
 var label lb = na
 var label lbE = na
 var label lbS = na
 var label lbT = na
-var label lbP = na
 
 if barstate.islast
     line.delete(lnTop)
@@ -173,54 +174,54 @@ if barstate.islast
     line.delete(lnE)
     line.delete(lnS)
     line.delete(lnT)
-    line.delete(lnPoc)
     box.delete(bx)
     label.delete(lb)
     label.delete(lbE)
     label.delete(lbS)
     label.delete(lbT)
-    label.delete(lbP)
 
     x2 = bar_index + 10
-    if phase >= 1 and not na(zTop) and not na(zBorn)
+    if phase >= 1 and phase != 0 and not na(zTop) and not na(zBorn)
         bx := box.new(zBorn, zTop, x2, zBot, bgcolor = color.new(colZone, 78), border_color = colZone, border_width = 1)
         lnTop := line.new(zBorn, zTop, x2, zTop, color = colZone, width = 2)
         lnBot := line.new(zBorn, zBot, x2, zBot, color = colZone, width = 2)
 
         if phase == 1
-            waitTxt = zDir == 1 ? "ЖДИ\n• отбой вниз = ЗАЩИТА шорт\n• уход ВЫШЕ = ПРОБОЙ лонг" : "ЖДИ\n• отбой вверх = ЗАЩИТА лонг\n• уход НИЖЕ = ПРОБОЙ шорт"
+            waitTxt = zDir == 1 ? "ЖДИ у зоны\nотбой вниз → шорт от зоны\nуход ВЫШЕ → лонг от ВЕРХА зоны" : "ЖДИ у зоны\nотбой вверх → лонг от зоны\nуход НИЖЕ → шорт от НИЗА зоны"
             lb := label.new(x2, zMid, waitTxt, style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+        else if phase == 4
+            lb := label.new(x2, zMid, "ОПОЗДАЛ · НЕ ДОГОНЯЙ\nвход был на краю зоны\nцена уже ушла — жди новую зону", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.normal)
+            if not na(entry)
+                lnE := line.new(nz(armed, bar_index), entry, x2, entry, color = color.new(colDef, 60), width = 1, style = line.style_dotted)
+                lbE := label.new(x2, entry, "был вход (край зоны)", style = label.style_label_left, color = color.new(colWait, 40), textcolor = color.white, size = size.small)
         else if phase >= 2 and not na(entry)
             sideTxt = side == 1 ? "ЛОНГ" : "ШОРТ"
-            why = mode == "ЗАЩИТА" ? "отбой от серой зоны" : "цена ушла из зоны"
+            where = mode == "ЗАЩИТА" ? "вход = середина зоны" : (side == -1 ? "вход = НИЗ зоны (пробой)" : "вход = ВЕРХ зоны (пробой)")
             col = mode == "ЗАЩИТА" ? colDef : colBrk
-            lb := label.new(x2, zMid, mode + " · " + sideTxt + "\n" + why + "\n———\n1) вход по зелёной\n2) стоп по красной\n3) тейк по синей", style = label.style_label_left, color = color.new(col, 5), textcolor = color.white, size = size.normal)
+            lb := label.new(x2, zMid, mode + " · " + sideTxt + "\n" + where + "\n———\n1 вход  2 стоп  3 тейк", style = label.style_label_left, color = color.new(col, 5), textcolor = color.white, size = size.normal)
             lnE := line.new(armed, entry, x2, entry, color = colDef, width = 3)
             lnS := line.new(armed, stop, x2, stop, color = colStop, width = 3)
             lnT := line.new(armed, take, x2, take, color = colTp, width = 3)
-            lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = color.new(colDef, 0), textcolor = color.white, size = size.normal)
+            lbE := label.new(x2, entry, "1 ВХОД (на зоне) " + str.tostring(entry, format.mintick), style = label.style_label_left, color = color.new(colDef, 0), textcolor = color.white, size = size.normal)
             lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = color.new(colStop, 0), textcolor = color.white, size = size.normal)
             lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = color.new(colTp, 0), textcolor = color.white, size = size.normal)
 
-    if showPoc and not na(pocD1)
-        lnPoc := line.new(bar_index - 30, pocD1, x2, pocD1, color = color.new(#A855F7, 40), width = 1, style = line.style_dotted)
-        lbP := label.new(x2, pocD1, "POC D1 · не тейк", style = label.style_label_left, color = color.new(#A855F7, 50), textcolor = color.white, size = size.tiny)
-
 var table t = table.new(position.bottom_right, 2, 6, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    todo = phase == 0 ? "жди зону" : phase == 1 ? "НЕ ВХОДИ · жди отбой или уход" : side == 1 ? "ЛОНГ: 1 вход → 2 стоп → 3 тейк" : "ШОРТ: 1 вход → 2 стоп → 3 тейк"
+    todo = phase == 0 ? "жди зону" : phase == 1 ? "НЕ ВХОДИ · жди отбой или уход" : phase == 4 ? "ОПОЗДАЛ · не догоняй" : side == 1 ? "ЛОНГ от зоны · стоп/тейк на линиях" : "ШОРТ от зоны · стоп/тейк на линиях"
     table.cell(t, 0, 0, "ЧТО ДЕЛАТЬ", text_color = #F0B90B, text_size = size.normal)
     table.cell(t, 1, 0, todo, text_color = color.white, text_size = size.normal)
     table.cell(t, 0, 1, "Режим", text_color = #848E9C, text_size = size.small)
-    table.cell(t, 1, 1, phase <= 1 ? "ожидание" : mode + (side == 1 ? " · ЛОНГ" : " · ШОРТ"), text_color = phase <= 1 ? colWait : (mode == "ЗАЩИТА" ? colDef : colBrk), text_size = size.small)
+    table.cell(t, 1, 1, phase <= 1 ? "ожидание" : mode + (side == 0 ? "" : side == 1 ? " · ЛОНГ" : " · ШОРТ"), text_color = phase == 4 ? colLate : phase <= 1 ? colWait : (mode == "ЗАЩИТА" ? colDef : colBrk), text_size = size.small)
     table.cell(t, 0, 2, "1 Вход", text_color = #848E9C, text_size = size.small)
-    table.cell(t, 1, 2, na(entry) ? "—" : str.tostring(entry, format.mintick), text_color = colDef, text_size = size.small)
+    table.cell(t, 1, 2, na(entry) ? "—" : str.tostring(entry, format.mintick) + " (на зоне)", text_color = colDef, text_size = size.small)
     table.cell(t, 0, 3, "2 Стоп", text_color = #848E9C, text_size = size.small)
     table.cell(t, 1, 3, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colStop, text_size = size.small)
     table.cell(t, 0, 4, "3 Тейк", text_color = #848E9C, text_size = size.small)
-    table.cell(t, 1, 4, na(take) ? "—" : str.tostring(take, format.mintick) + "  (" + str.tostring(tpR, "#.#") + "R)", text_color = colTp, text_size = size.small)
-    table.cell(t, 0, 5, "Урок", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 5, "зона = уровень · защита ИЛИ пробой · один тейк", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 1, 4, na(take) ? "—" : str.tostring(take, format.mintick), text_color = colTp, text_size = size.small)
+    table.cell(t, 0, 5, "Правило", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, "вход всегда на зоне · ушла далеко = опоздал", text_color = color.white, text_size = size.tiny)
 
-alertcondition(phase == 2 and phase[1] == 1, "Защита", "ЗАЩИТА уровня — смотри вход/стоп/тейк")
-alertcondition(phase == 3 and phase[1] == 1, "Пробой", "ПРОБОЙ зоны — смотри вход/стоп/тейк")
+alertcondition(phase == 2 and phase[1] == 1, "Защита", "ЗАЩИТА — вход на зоне")
+alertcondition(phase == 3 and phase[1] == 1, "Пробой", "ПРОБОЙ — вход на краю зоны")
+alertcondition(phase == 4 and phase[1] != 4, "Опоздал", "Цена ушла от входа — не догоняй")
