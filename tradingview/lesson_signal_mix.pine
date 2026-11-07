@@ -2,11 +2,13 @@
 // 65 Signal Mix — микс уроков + старых скриптов.
 // На графике ТОЛЬКО: сигнал · почему · рисунок причины · вход/стоп/тейк с ценой.
 // Остальные модули считают в фоне и голосуют (конфлюенс).
-indicator("65 Signal Mix", overlay = true, max_labels_count = 40, max_lines_count = 40, max_boxes_count = 8)
+indicator("65 Signal Mix", overlay = true, max_labels_count = 80, max_lines_count = 60, max_boxes_count = 16)
 
 grp = "Сигнал"
 minVotes   = input.int(2, "Мин. совпадений (точность)", minval = 1, maxval = 6, group = grp, tooltip = "Сколько модулей должны сказать в одну сторону. 2–3 = точнее, меньше спама.")
-tpR        = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
+tp1R       = input.float(1.0, "ТЕЙК1 = риск ×", minval = 0.5, step = 0.25, group = grp)
+tp2R       = input.float(2.0, "ТЕЙК2 = риск ×", minval = 0.5, step = 0.25, group = grp)
+tp3R       = input.float(3.0, "ТЕЙК3 = риск ×", minval = 0.5, step = 0.25, group = grp)
 slPad      = input.float(0.12, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
 freshBars  = input.int(6, "Держать сигнал N свечей", minval = 2, maxval = 20, group = grp)
 cooldown   = input.int(8, "Пауза между сигналами", minval = 3, maxval = 40, group = grp)
@@ -721,7 +723,9 @@ canFire = na(lastFire) or (bar_index - lastFire) >= cooldown
 
 float entry = na
 float stop = na
-float take = na
+float take1 = na
+float take2 = na
+float take3 = na
 int side = 0
 string why = ""
 int drawCode = 0
@@ -734,7 +738,9 @@ if barstate.isconfirmed and canFire and rawLong
     stop := stopL
     risk = entry - stop
     if risk > 0
-        take := entry + tpR * risk
+        take1 := entry + tp1R * risk
+        take2 := entry + tp2R * risk
+        take3 := entry + tp3R * risk
         side := 1
         why := whyL
         drawCode := drawL
@@ -748,7 +754,9 @@ if barstate.isconfirmed and canFire and rawShort and side == 0
     stop := stopS
     risk = stop - entry
     if risk > 0
-        take := entry - tpR * risk
+        take1 := entry - tp1R * risk
+        take2 := entry - tp2R * risk
+        take3 := entry - tp3R * risk
         side := -1
         why := whyS
         drawCode := drawS
@@ -759,7 +767,9 @@ if barstate.isconfirmed and canFire and rawShort and side == 0
 
 var float eMem = na
 var float sMem = na
-var float tMem = na
+var float t1Mem = na
+var float t2Mem = na
+var float t3Mem = na
 var int sideMem = 0
 var string whyMem = ""
 var int drawMem = 0
@@ -775,7 +785,9 @@ var float l2Mem = na
 if side != 0
     eMem := entry
     sMem := stop
-    tMem := take
+    t1Mem := take1
+    t2Mem := take2
+    t3Mem := take3
     sideMem := side
     whyMem := why
     drawMem := drawCode
@@ -792,7 +804,9 @@ haveSig = not na(eMem) and not na(bornMem) and (bar_index - bornMem) <= freshBar
 if haveSig
     entry := eMem
     stop := sMem
-    take := tMem
+    take1 := t1Mem
+    take2 := t2Mem
+    take3 := t3Mem
     side := sideMem
     why := whyMem
     drawCode := drawMem
@@ -802,7 +816,9 @@ if haveSig
 else
     eMem := na
     sMem := na
-    tMem := na
+    t1Mem := na
+    t2Mem := na
+    t3Mem := na
     sideMem := 0
     whyMem := ""
     drawMem := 0
@@ -812,11 +828,15 @@ else
     bornMem := na
     entry := na
     stop := na
-    take := na
+    take1 := na
+    take2 := na
+    take3 := na
     side := 0
     why := ""
     drawCode := 0
     votes := 0
+
+float take = take2  // основной тейк для истории / алертов = TP2
 
 nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
@@ -872,17 +892,27 @@ if showHist and array.size(exBi) > 0
 plotshape(showHist and haveSig and bar_index == bornMem and side == 1, title = "L", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.tiny)
 plotshape(showHist and haveSig and bar_index == bornMem and side == -1, title = "S", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.tiny)
 
-// ── рисунок ТОЛЬКО активного сигнала ───────────────────────────────────
+// ── рисунок ТОЛЬКО активного сигнала: позиция + каждый тейк ────────────
 var label lbMain = na
 var label lbWhy = na
 var label lbE = na
 var label lbS = na
-var label lbT = na
+var label lbT1 = na
+var label lbT2 = na
+var label lbT3 = na
+var label lbPos = na
 var line lnE = na
 var line lnS = na
-var line lnT = na
+var line lnT1 = na
+var line lnT2 = na
+var line lnT3 = na
+var line lnPath = na
 var line lnWhy = na
 var box bxWhy = na
+var box bxRisk = na
+var box bxTp1 = na
+var box bxTp2 = na
+var box bxTp3 = na
 var array<label> histLabs = array.new_label()
 
 if barstate.islast
@@ -890,18 +920,28 @@ if barstate.islast
     label.delete(lbWhy)
     label.delete(lbE)
     label.delete(lbS)
-    label.delete(lbT)
+    label.delete(lbT1)
+    label.delete(lbT2)
+    label.delete(lbT3)
+    label.delete(lbPos)
     line.delete(lnE)
     line.delete(lnS)
-    line.delete(lnT)
+    line.delete(lnT1)
+    line.delete(lnT2)
+    line.delete(lnT3)
+    line.delete(lnPath)
     line.delete(lnWhy)
     box.delete(bxWhy)
+    box.delete(bxRisk)
+    box.delete(bxTp1)
+    box.delete(bxTp2)
+    box.delete(bxTp3)
     if array.size(histLabs) > 0
         for k = 0 to array.size(histLabs) - 1
             label.delete(array.get(histLabs, k))
         array.clear(histLabs)
 
-    x2 = bar_index + 8
+    x2 = bar_index + 10
     if status == "WAIT"
         bgVotes = "фон: L" + str.tostring(vLong) + " / S" + str.tostring(vShort) + " (нужно ≥" + str.tostring(minVotes) + ")"
         lbMain := label.new(x2, close, "ЖДИ\nсигнала нет\n\n" + bgVotes, style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
@@ -911,21 +951,40 @@ if barstate.islast
         sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди цену") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди цену")
         col = side == 1 ? colGo : colStop
         risk = math.abs(entry - stop)
-        reward = math.abs(take - entry)
-        rr = risk > 0 ? reward / risk : 0.0
-        pct = pxPct(entry, take)
-        marg = pct * leverage
-        lbMain := label.new(x2, entry, sideTxt + "\nсовпадений: " + str.tostring(votes) + "\n+" + str.tostring(pct, "#.##") + "% · " + str.tostring(rr, "#.##") + "R · маржа~" + str.tostring(marg, "#.#") + "%", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
-        lbWhy := label.new(nz(bornMem, bar_index), side == 1 ? stop : take, "ПОЧЕМУ:\n" + why, style = label.style_label_right, color = color.new(#1E2329, 5), textcolor = color.white, size = size.normal)
-        lnE := line.new(nz(bornMem, bar_index), entry, x2, entry, color = colGo, width = 3)
-        lnS := line.new(nz(bornMem, bar_index), stop, x2, stop, color = colStop, width = 2, style = line.style_dotted)
-        lnT := line.new(nz(bornMem, bar_index), take, x2, take, color = colTp, width = 2, style = line.style_dashed)
-        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
-        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick) + " (−" + str.tostring(pxPct(entry, stop), "#.##") + "%)", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
-        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick) + " (+" + str.tostring(pct, "#.##") + "%)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+        pct1 = pxPct(entry, take1)
+        pct2 = pxPct(entry, take2)
+        pct3 = pxPct(entry, take3)
+        marg2 = pct2 * leverage
+        b0 = nz(bornMem, bar_index)
+        // полосы позиции: риск + каждый тейк отдельно
+        bxRisk := box.new(b0, math.max(entry, stop), x2, math.min(entry, stop), bgcolor = color.new(colStop, 88), border_color = color.new(colStop, 40), border_width = 1, text = "РИСК", text_color = colStop, text_size = size.tiny)
+        if side == 1
+            bxTp1 := box.new(b0, take1, x2, entry, bgcolor = color.new(colGo, 92), border_color = color.new(colGo, 50), border_width = 1, text = "TP1 " + str.tostring(tp1R, "#.#") + "R", text_color = colGo, text_size = size.tiny)
+            bxTp2 := box.new(b0, take2, x2, take1, bgcolor = color.new(colTp, 90), border_color = color.new(colTp, 40), border_width = 1, text = "TP2 " + str.tostring(tp2R, "#.#") + "R", text_color = colTp, text_size = size.tiny)
+            bxTp3 := box.new(b0, take3, x2, take2, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R", text_color = #A78BFA, text_size = size.tiny)
+        else
+            bxTp1 := box.new(b0, entry, x2, take1, bgcolor = color.new(colGo, 92), border_color = color.new(colGo, 50), border_width = 1, text = "TP1 " + str.tostring(tp1R, "#.#") + "R", text_color = colGo, text_size = size.tiny)
+            bxTp2 := box.new(b0, take1, x2, take2, bgcolor = color.new(colTp, 90), border_color = color.new(colTp, 40), border_width = 1, text = "TP2 " + str.tostring(tp2R, "#.#") + "R", text_color = colTp, text_size = size.tiny)
+            bxTp3 := box.new(b0, take2, x2, take3, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R", text_color = #A78BFA, text_size = size.tiny)
+
+        lbMain := label.new(x2, entry, sideTxt + "\nсовпадений: " + str.tostring(votes) + "\nTP2 +" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R · маржа~" + str.tostring(marg2, "#.#") + "%", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lbPos := label.new(b0, side == 1 ? take3 : stop, "ПОЗИЦИЯ\nстоп → TP1 → TP2 → TP3", style = label.style_label_down, color = color.new(#1E2329, 10), textcolor = color.white, size = size.small)
+        lbWhy := label.new(b0, side == 1 ? stop : take3, "ПОЧЕМУ:\n" + why, style = label.style_label_right, color = color.new(#1E2329, 5), textcolor = color.white, size = size.normal)
+
+        lnE := line.new(b0, entry, x2, entry, color = colGo, width = 4)
+        lnS := line.new(b0, stop, x2, stop, color = colStop, width = 3, style = line.style_dotted)
+        lnT1 := line.new(b0, take1, x2, take1, color = colGo, width = 2, style = line.style_dashed)
+        lnT2 := line.new(b0, take2, x2, take2, color = colTp, width = 3, style = line.style_dashed)
+        lnT3 := line.new(b0, take3, x2, take3, color = #8B5CF6, width = 2, style = line.style_dashed)
+        lnPath := line.new(b0, entry, x2, take3, color = color.new(col, 30), width = 2)
+
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick) + " (−" + str.tostring(pxPct(entry, stop), "#.##") + "%)", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
+        lbT1 := label.new(x2, take1, "3 ТЕЙК1 " + str.tostring(take1, format.mintick) + " (+" + str.tostring(pct1, "#.##") + "% · " + str.tostring(tp1R, "#.#") + "R)", style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
+        lbT2 := label.new(x2, take2, "4 ТЕЙК2 " + str.tostring(take2, format.mintick) + " (+" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+        lbT3 := label.new(x2, take3, "5 ТЕЙК3 " + str.tostring(take3, format.mintick) + " (+" + str.tostring(pct3, "#.##") + "% · " + str.tostring(tp3R, "#.#") + "R)", style = label.style_label_left, color = #8B5CF6, textcolor = color.white, size = size.normal)
 
         // рисунок причины (зона / уровень / трендовая / тень)
-        b0 = nz(bornMem, bar_index)
         if drawCode == 5 and side == 1 and not na(hb2Mem) and not na(h2Mem) and not na(dY2)
             lnWhy := line.new(hb2Mem, h2Mem, b0, dY2, color = color.new(colTp, 10), width = 3)
         else if drawCode == 5 and side == -1 and not na(lb2Mem) and not na(l2Mem) and not na(dY2)
@@ -951,12 +1010,14 @@ if barstate.islast
                 res = outc == 1 ? "ТЕЙК✓" : outc == -1 ? "СТОП✗" : outc == 2 ? "мимо" : "…"
                 array.push(histLabs, label.new(bi, e0, (sSide == 1 ? "L " : "S ") + res + "\nтейк " + str.tostring(t0, format.mintick), style = sSide == 1 ? label.style_label_up : label.style_label_down, color = color.new(outc == 1 ? colGo : outc == -1 ? colStop : colMiss, 20), textcolor = color.white, size = size.tiny))
 
-var table t = table.new(position.top_right, 1, 3, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.top_right, 1, 5, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
 if barstate.islast
     big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "LATE" ? "ОПОЗДАЛ" : status == "WAIT_FILL" ? "жди цену" : "ЖДИ"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
-    table.cell(t, 0, 1, haveSig ? ("голоса " + str.tostring(votes) + " · вход " + str.tostring(entry, format.mintick) + " · тейк " + str.tostring(take, format.mintick)) : ("микс уроков · нужно ≥" + str.tostring(minVotes) + " · сейчас L" + str.tostring(vLong) + "/S" + str.tostring(vShort)), text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, "на графике: сигнал + почему + рисунок · остальное в фоне", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 1, haveSig ? ("вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick)) : ("микс · нужно ≥" + str.tostring(minVotes) + " · L" + str.tostring(vLong) + "/S" + str.tostring(vShort)), text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, haveSig ? ("ТЕЙК1 " + str.tostring(take1, format.mintick) + " · +" + str.tostring(pxPct(entry, take1), "#.##") + "%") : "—", text_color = colGo, text_size = size.small)
+    table.cell(t, 0, 3, haveSig ? ("ТЕЙК2 " + str.tostring(take2, format.mintick) + " · +" + str.tostring(pxPct(entry, take2), "#.##") + "%") : "—", text_color = colTp, text_size = size.small)
+    table.cell(t, 0, 4, haveSig ? ("ТЕЙК3 " + str.tostring(take3, format.mintick) + " · +" + str.tostring(pxPct(entry, take3), "#.##") + "%") : "позиция: риск + TP1/2/3", text_color = #A78BFA, text_size = size.small)
 
 fireLong = haveSig and bar_index == bornMem and side == 1
 fireShort = haveSig and bar_index == bornMem and side == -1
@@ -965,9 +1026,9 @@ goShort = status == "NOW" and side == -1 and not (status[1] == "NOW" and side[1]
 
 if barstate.isconfirmed
     if fireLong
-        alert("MIX ЛОНГ · " + syminfo.ticker + " · " + str.tostring(votes) + " голоса · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick) + "\n" + why, alert.freq_once_per_bar_close)
+        alert("MIX ЛОНГ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · TP1 " + str.tostring(take1, format.mintick) + " · TP2 " + str.tostring(take2, format.mintick) + " · TP3 " + str.tostring(take3, format.mintick) + "\n" + why, alert.freq_once_per_bar_close)
     if fireShort
-        alert("MIX ШОРТ · " + syminfo.ticker + " · " + str.tostring(votes) + " голоса · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick) + "\n" + why, alert.freq_once_per_bar_close)
+        alert("MIX ШОРТ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · TP1 " + str.tostring(take1, format.mintick) + " · TP2 " + str.tostring(take2, format.mintick) + " · TP3 " + str.tostring(take3, format.mintick) + "\n" + why, alert.freq_once_per_bar_close)
     if goLong and not fireLong
         alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
     if goShort and not fireShort
