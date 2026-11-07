@@ -1,7 +1,7 @@
 //@version=6
-// 65 Map Algo — карта SMC мелкими метками (BOS/CHoCH/SW/OB) + скальп-сделка.
-// Короткие tiny-лейблы, чтобы зум не ломался. Fib/фигуры по умолчанию выкл.
-indicator("65 Map Algo", overlay = true, max_boxes_count = 80, max_lines_count = 80, max_labels_count = 80)
+// 65 Map Algo FULL — SMC (BOS/CHoCH/SW/OB/FVG) + SK Fib + фигуры + скальп.
+// Метки короткие (tiny), чтобы график не схлопывался при зуме.
+indicator("65 Map Algo FULL", overlay = true, max_boxes_count = 200, max_lines_count = 200, max_labels_count = 200)
 
 // ── inputs ──────────────────────────────────────────────────────────────
 grpTrend = "Trend"
@@ -15,22 +15,22 @@ showLevels = input.bool(true, "Структурные уровни", group = grp
 showBos    = input.bool(true, "BOS / CHoCH", group = grpSmc)
 showOb     = input.bool(true, "Order Block", group = grpSmc)
 showSweep  = input.bool(true, "Снятие ликвидности", group = grpSmc)
-showFvg    = input.bool(false, "FVG имбаланс", group = grpSmc)
+showFvg    = input.bool(true, "FVG имбаланс", group = grpSmc)
 fvgMinAtr  = input.float(0.25, "Мин FVG в ATR", minval = 0.05, step = 0.05, group = grpSmc)
 fvgMax     = input.int(5, "Макс FVG", minval = 1, maxval = 15, group = grpSmc)
 obMax      = input.int(4, "Макс Order Block", minval = 1, maxval = 10, group = grpSmc)
 
 grpFig = "Figures"
-showSqueeze = input.bool(false, "Сжатие", group = grpFig)
+showSqueeze = input.bool(true, "Сжатие", group = grpFig)
 sqBars      = input.int(12, "Свечей сжатия", group = grpFig)
 sqAtr       = input.float(2.5, "Ширина сжатия ATR", group = grpFig)
-showDouble  = input.bool(false, "Двойное дно/вершина", group = grpFig)
+showDouble  = input.bool(true, "Двойное дно/вершина", group = grpFig)
 dblTol      = input.float(0.35, "Допуск уровней ATR", group = grpFig)
-showHs      = input.bool(false, "Голова и плечи", group = grpFig)
+showHs      = input.bool(true, "Голова и плечи", group = grpFig)
 hsTol       = input.float(0.45, "Допуск плеч ATR", group = grpFig)
 
 grpFib = "SK Fib (как в видео TradersNotes)"
-showFib     = input.bool(false, "SK Fib сетап (рисовать зону)", group = grpFib)
+showFib     = input.bool(true, "SK Fib сетап (рисовать зону)", group = grpFib)
 fibPivot    = input.int(5, "Pivot импульса", minval = 2, maxval = 20, group = grpFib, tooltip = "Как в видео: импульс = подтверждённый swing high → swing low (шорт) или low → high (лонг), не скользящее окно.")
 fibMinAtr   = input.float(2.0, "Мин импульс в ATR", minval = 0.5, step = 0.5, group = grpFib)
 fibZoneLo   = input.float(0.5, "Зона отката от", minval = 0.3, maxval = 0.7, step = 0.01, group = grpFib, tooltip = "В книге SK: зона 0.5–0.618")
@@ -52,7 +52,7 @@ useFvgFill  = input.bool(true, "FVG fill вход", group = grpExtra)
 useAsia     = input.bool(true, "Пробой Asian range (UTC 0–8)", group = grpExtra)
 
 grpEntry = "Entry"
-entryMode = input.string("Scalp", "Движок входа", options = ["Scalp", "SK Fib", "SMC+", "Всё"], group = grpEntry, tooltip = "Scalp = 1m/5m: быстрые TP 0.5/1/1.5R, BE после TP1, тренд 15m. SK Fib = фибо. SMC+ = ретест. Всё = старый микс.")
+entryMode = input.string("Всё", "Движок входа", options = ["Scalp", "SK Fib", "SMC+", "Всё"], group = grpEntry, tooltip = "Scalp = 1m/5m: быстрые TP 0.5/1/1.5R, BE после TP1, тренд 15m. SK Fib = фибо. SMC+ = ретест. Всё = старый микс.")
 oneTrade   = input.bool(true, "Одна сделка за раз", group = grpEntry, tooltip = "Пока алго-сделка открыта — новые BUY/SELL не открываются.")
 sharpOnly   = input.bool(true, "Точечный режим: только ВХОДИТЬ ЛОНГ/ШОРТ", group = grpEntry)
 algoStyle   = input.bool(true, "Стиль алго Buy/Sell + TP1/2/3", group = grpEntry, tooltip = "Одна активная сделка: SL-зона + TP1/TP2/TP3. История — мелкие ▲/▼ с TP✓ или SL✗.")
@@ -104,7 +104,7 @@ trackOb = true
 trackFvg = true
 trackSweep = true
 fibLogicOn = true
-maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : 5)
+maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : 8)
 
 // ── helpers ─────────────────────────────────────────────────────────────
 word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
@@ -442,7 +442,7 @@ var box sqBox = na
 if paintFig and showSqueeze
     if inSqueeze
         if na(sqBox)
-            sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 25), bgcolor = color.new(#F0B90B, 92), border_style = line.style_dashed, text = "сжатие · ждём пробой", text_color = #F0B90B, text_size = size.tiny)
+            sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 25), bgcolor = color.new(#F0B90B, 92), border_style = line.style_dashed, text = "SQ", text_color = #F0B90B, text_size = size.tiny)
         else
             box.set_right(sqBox, bar_index)
             box.set_top(sqBox, sqHigh)
@@ -503,10 +503,10 @@ if paintFig and showDouble and barstate.islast
     allowWaitDn = not sharpOnly or trend4h <= 0
     if allowWaitUp and not na(neckL) and not na(extL) and close <= neckL
         neckLineL := line.new(clampBar(p2Lb), neckL, bar_index + 2, neckL, color = #0ECB81, style = line.style_dashed)
-        neckWaitL := label.new(bar_index + 2, neckL, sharpOnly ? "ждём шею ↑" : "фигура: двойное дно\nждём пробой шеи вверх", style = label.style_label_left, color = color.new(#0ECB81, 20), textcolor = color.white, size = size.tiny)
+        neckWaitL := label.new(bar_index + 2, neckL, "DBL↑", style = label.style_label_left, color = color.new(#0ECB81, 20), textcolor = color.white, size = size.tiny)
     if allowWaitDn and not na(neckH) and not na(extH) and close >= neckH
         neckLineH := line.new(clampBar(p2Hb), neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
-        neckWaitH := label.new(bar_index + 2, neckH, sharpOnly ? "ждём шею ↓" : "фигура: двойная вершина\nждём пробой шеи вниз", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.tiny)
+        neckWaitH := label.new(bar_index + 2, neckH, "DBL↓", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.tiny)
 
 rawDblUp = showDouble and ok and not na(neckL) and close > neckL and close[1] <= neckL and not na(extL) and neckL - extL >= atrV
 rawDblDn = showDouble and ok and not na(neckH) and close < neckH and close[1] >= neckH and not na(extH) and extH - neckH >= atrV
@@ -672,10 +672,10 @@ if paintFig and showHs and barstate.islast
         hsNeckLn := line.new(hsX0, hsNeck, bar_index + 2, hsNeck, color = hsC, style = line.style_solid, width = 2)
         hsLsLn := line.new(hsX0, hsLsPx, hsXh, hsExt, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
         hsRsLn := line.new(hsXh, hsExt, hsXr, hsRsPx, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
-        string hsTxt = hsSide > 0 ? "перев. голова-плечи\nждём шею ↑" : "голова-плечи\nждём шею ↓"
+        string hsTxt = hsSide > 0 ? "iH&S↑" : "H&S↓"
         bool stillWait = hsSide > 0 ? close <= hsNeck : close >= hsNeck
         if stillWait
-            hsLbl := label.new(bar_index + 2, hsNeck, hsTxt, style = label.style_label_left, color = color.new(hsC, 15), textcolor = color.white, size = size.small)
+            hsLbl := label.new(bar_index + 2, hsNeck, hsTxt, style = label.style_label_left, color = color.new(hsC, 35), textcolor = color.white, size = size.tiny)
 
 rawHsUp = showHs and ok and hsSide > 0 and not na(hsNeck) and not na(hsExt) and close > hsNeck and close[1] <= hsNeck and hsNeck - hsExt >= atrV
 rawHsDn = showHs and ok and hsSide < 0 and not na(hsNeck) and not na(hsExt) and close < hsNeck and close[1] >= hsNeck and hsExt - hsNeck >= atrV
@@ -962,7 +962,7 @@ if barstate.islast
         array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
         array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
         array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ШОРТ", text_color = #A78BFA, text_size = size.tiny)
+        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "0.5–0.618 S", text_color = #A78BFA, text_size = size.tiny)
         fibState := close < skZoneBot ? "ждём откат ↑ в 0.5–0.618" : inSkShortZone ? "в зоне · ждём медв. свечу" : "выше 0.618 · стоп-зона"
     else if paintFib and skUp
         int x0 = clampBar(skABar)
@@ -979,7 +979,7 @@ if barstate.islast
         array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
         array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
         array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ЛОНГ", text_color = #A78BFA, text_size = size.tiny)
+        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "0.5–0.618 L", text_color = #A78BFA, text_size = size.tiny)
         fibState := close > skZoneTop ? "ждём откат ↓ в 0.5–0.618" : inSkLongZone ? "в зоне · ждём быч. свечу" : "ниже 0.618 · стоп-зона"
     else if fibLogicOn
         fibState := not na(skA) and na(skB) ? (skSide < 0 ? "ждём low импульса ↓" : "ждём high импульса ↑") : "импульса нет"
