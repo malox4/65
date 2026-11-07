@@ -186,10 +186,14 @@ if barstate.islast and showHist
             array.push(histLines, line.new(bi, e0, bi + math.max(4, int(lookN * 0.4)), t0, color = color.new(colTp, 20), width = 3))
             array.push(histLines, line.new(bi, t0, xEnd, t0, color = color.new(colTp, 30), width = 2, style = line.style_dashed))
             array.push(histLines, line.new(bi, s0, xEnd, s0, color = color.new(colStop, 50), width = 1, style = line.style_dotted))
+            risk = math.abs(e0 - s0)
+            reward = math.abs(t0 - e0)
+            rr = risk > 0 ? reward / risk : 0.0
+            pct = e0 != 0 ? (sSide == 1 ? (t0 - e0) / e0 : (e0 - t0) / e0) * 100.0 : 0.0
             res = outc == 1 ? "итог: ТЕЙК ✓" : outc == -1 ? "итог: СТОП ✗" : outc == 2 ? "итог: мимо" : "итог: ещё идёт"
-            txt = (sSide == 1 ? "ЛОНГ" : "ШОРТ") + "\nвход " + str.tostring(e0, format.mintick) + "\nстоп " + str.tostring(s0, format.mintick) + "\nтейк " + str.tostring(t0, format.mintick) + "\n" + res
+            txt = (sSide == 1 ? "ЛОНГ" : "ШОРТ") + "\nвход " + str.tostring(e0, format.mintick) + "\nстоп " + str.tostring(s0, format.mintick) + "\nтейк " + str.tostring(t0, format.mintick) + "\n+" + str.tostring(pct, "#.##") + "% · " + str.tostring(rr, "#.##") + "R\n" + res
             array.push(histLabs, label.new(bi + 2, e0, txt, style = sSide == 1 ? label.style_label_up : label.style_label_down, color = color.new(outc == 1 ? colGo : outc == -1 ? colStop : colMiss, 5), textcolor = color.white, size = size.normal))
-            array.push(histLabs, label.new(xEnd, t0, "ТЕЙК " + str.tostring(t0, format.mintick), style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small))
+            array.push(histLabs, label.new(xEnd, t0, "ТЕЙК " + str.tostring(t0, format.mintick) + " (+" + str.tostring(pct, "#.##") + "%)", style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small))
 
 var line lnE = na
 var line lnS = na

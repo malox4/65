@@ -214,9 +214,9 @@ if barstate.islast
         lnSl := line.new(signalBar, stop, x2, stop, color = colDead, width = 2, style = line.style_dotted)
         lnTp := line.new(signalBar, take, x2, take, color = colTgt, width = 2, style = line.style_dotted)
         lnPath := line.new(signalBar, entry, x2, take, color = obDir == 1 ? colLive : colDead, width = 3)
-        lbEnt := label.new(x2, entry, "1. ВХОД", style = label.style_label_left, color = color.new(colEnt, 10), textcolor = color.black, size = size.normal)
-        lbSl := label.new(x2, stop, "СТОП (если против)", style = label.style_label_left, color = color.new(colDead, 10), textcolor = color.white, size = size.small)
-        lbTp := label.new(x2, take, "2. ТЕЙК (сюда)", style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.normal)
+        lbEnt := label.new(x2, entry, "1. ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = color.new(colEnt, 10), textcolor = color.black, size = size.normal)
+        lbSl := label.new(x2, stop, "СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = color.new(colDead, 10), textcolor = color.white, size = size.small)
+        lbTp := label.new(x2, take, "2. ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.normal)
         why = obDir == 1 ? "ПОЧЕМУ ЛОНГ:\n1) был импульс вверх → ОБ↑\n2) цена ушла из бокса\n3) вернулась (ретест)\n4) ждём рост к ТЕЙК" : "ПОЧЕМУ ШОРТ:\n1) был импульс вниз → ОБ↓\n2) цена ушла из бокса\n3) вернулась (ретест)\n4) ждём падение к ТЕЙК"
         lbWhy := label.new(signalBar, obDir == 1 ? stop : take, why, style = label.style_label_right, color = color.new(#1E2329, 5), textcolor = color.white, size = size.normal)
         dirTxt = obDir == 1 ? "НАПРАВЛЕНИЕ: ВХОД ➜ ВВЕРХ ➜ ТЕЙК\n(лонг, стоп ниже входа)" : "НАПРАВЛЕНИЕ: ВХОД ➜ ВНИЗ ➜ ТЕЙК\n(шорт, стоп выше входа)"
