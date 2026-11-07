@@ -1,6 +1,7 @@
 //@version=6
-// 65 SMC Map: уровень · пробой · фигура · потенциальная свеча
-indicator("65 Map Algo", overlay = true, max_boxes_count = 300, max_lines_count = 300, max_labels_count = 300)
+// 65 Map Algo v3 — Scalp x20 · TP1/2/3 · BE после TP1
+// Если на графике НЕТ жёлтой метки «65 v3 SCALP» слева внизу — это СТАРАЯ версия, перевставь скрипт.
+indicator("65 Map Algo v3 · Scalp", overlay = true, max_boxes_count = 300, max_lines_count = 300, max_labels_count = 300)
 
 // ── inputs ──────────────────────────────────────────────────────────────
 grpTrend = "Trend"
@@ -86,11 +87,11 @@ useTp1R = modeScalp ? scalpTp1 : tp1R
 useTp2R = modeScalp ? scalpTp2 : tp2R
 useTp3R = modeScalp ? scalpTp3 : tp3R
 useHorizon = modeScalp ? scalpHorizon : tradeHorizon
-useConfirm = modeScalp ? math.min(confirmBars, 6) : confirmBars
-useCooldown = modeScalp ? math.min(cooldown, 5) : cooldown
-// на 1m/5m мелкий swing = спам CHoCH/BOS; для скальпа карта тихая
+useConfirm = modeScalp ? math.max(confirmBars, 10) : confirmBars
+useCooldown = modeScalp ? math.min(cooldown, 3) : cooldown
+// скальп: средний swing (не 12 — иначе CHoCH почти не бывает на 1m)
 isLowTf = timeframe.isintraday and timeframe.multiplier <= 5
-useSwing = modeScalp or isLowTf ? math.max(swingLen, 12) : swingLen
+useSwing = modeScalp ? math.max(swingLen, 7) : isLowTf ? math.max(swingLen, 10) : swingLen
 drawEvents = showBos and not modeScalp
 drawSweeps = showSweep and not modeScalp
 drawObUi = showOb and not modeScalp
@@ -98,7 +99,8 @@ drawFvgUi = showFvg and not modeScalp
 drawFibUi = showFib and not modeScalp
 drawFigUi = not modeScalp
 maxEvents = modeScalp ? 2 : 10
-maxHist = modeScalp ? math.min(maxHistTrades, 6) : maxHistTrades
+maxHist = modeScalp ? math.min(maxHistTrades, 8) : maxHistTrades
+SCRIPT_VER = "v3 SCALP"
 
 // ── helpers ─────────────────────────────────────────────────────────────
 word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
@@ -179,6 +181,11 @@ htfShort = not needHtf or trendFilter == -1
 plot(emaF, "EMA20", color = #F0B90B)
 plot(emaS, "EMA50", color = #848E9C)
 bgcolor(modeScalp ? na : trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
+
+// жёлтая метка = новая версия реально на графике
+var table verTag = table.new(position.bottom_left, 1, 1, bgcolor = color.new(#F0B90B, 0), border_width = 1, border_color = #F0B90B)
+if barstate.islast
+    table.cell(verTag, 0, 0, "65 " + SCRIPT_VER + " · x" + str.tostring(leverage, "#") + " · " + entryMode, text_color = #0B0E11, text_size = size.small)
 
 var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
 if barstate.islast and not modeScalp
@@ -693,13 +700,22 @@ retestLong = not na(pendLongBar) and bar_index > pendLongBar and (inBullOb or in
 retestShort = not na(pendShortBar) and bar_index > pendShortBar and (inBearOb or inBearFvg or high >= emaF and close <= emaF) and close < open
 smcLongOk = retestLong
 smcShortOk = retestShort
-// на минутке фигуры почти всегда шум — скальп только ретест / EMA / sweep
+// скальп v3: микро-пробой 3 свечей + откат к EMA (как ручные тейки на PEPE 1m)
+microHi3 = ta.highest(high, 3)
+microLo3 = ta.lowest(low, 3)
+scalpBreakL = modeScalp and ok and htfLong and volOk and close > microHi3[1] and close > open and close > emaF
+scalpBreakS = modeScalp and ok and htfShort and volOk and close < microLo3[1] and close < open and close < emaF
+scalpPullL = modeScalp and ok and htfLong and volOk and low <= emaF and close > emaF and close > open and close >= close[1]
+scalpPullS = modeScalp and ok and htfShort and volOk and high >= emaF and close < emaF and close < open and close <= close[1]
+scalpLongOk = scalpBreakL or scalpPullL or smcLongOk
+scalpShortOk = scalpBreakS or scalpPullS or smcShortOk
+// на минутке фигуры почти всегда шум — скальп только микро + ретест / EMA / sweep
 figLongOk = modeScalp ? false : (sqBreakUp or dblUp or hsUp)
 figShortOk = modeScalp ? false : (sqBreakDn or dblDn or hsDn)
-longSetup = showEntries and ok and htfLong and volOk and (figLongOk or smcLongOk)
-shortSetup = showEntries and ok and htfShort and volOk and (figShortOk or smcShortOk)
+longSetup = showEntries and ok and htfLong and volOk and (figLongOk or (modeScalp ? scalpLongOk : smcLongOk))
+shortSetup = showEntries and ok and htfShort and volOk and (figShortOk or (modeScalp ? scalpShortOk : smcShortOk))
 
-waiting = not na(pendLongBar) ? "ретест после " + pendLongWhy : not na(pendShortBar) ? "ретест после " + pendShortWhy : inSqueeze ? "пробой сжатия" : waitHsUp ? "пробой перев. Г-П" : waitHsDn ? "пробой головы-плеч" : waitDblUp ? "пробой двойного дна" : waitDblDn ? "пробой двойной вершины" : inBullOb or inBearOb ? "возврат в OB" : inBullFvg or inBearFvg ? "работа с FVG" : "—"
+waiting = modeScalp ? (not na(pendLongBar) ? "ретест " + pendLongWhy : not na(pendShortBar) ? "ретест " + pendShortWhy : close > emaF and trend15 == 1 ? "лонг · ждём откат EMA/пробой" : close < emaF and trend15 == -1 ? "шорт · ждём откат EMA/пробой" : "ждём импульс 15m") : not na(pendLongBar) ? "ретест после " + pendLongWhy : not na(pendShortBar) ? "ретест после " + pendShortWhy : inSqueeze ? "пробой сжатия" : waitHsUp ? "пробой перев. Г-П" : waitHsDn ? "пробой головы-плеч" : waitDblUp ? "пробой двойного дна" : waitDblDn ? "пробой двойной вершины" : inBullOb or inBearOb ? "возврат в OB" : inBullFvg or inBearFvg ? "работа с FVG" : "—"
 if barstate.islast and not modeScalp
     table.cell(dash, 1, 4, waiting, text_color = #F0B90B, text_size = size.tiny)
 
@@ -714,11 +730,11 @@ if shortFire
     lastShort := bar_index
     pendShortBar := na
 
-figLong = hsUp ? "голова-плечи ↑" : dblUp ? "двойное дно" : sqBreakUp ? "пробой сжатия" : smcLongOk ? pendLongWhy + " ретест" : "вход"
-figShort = hsDn ? "голова-плечи ↓" : dblDn ? "двойная вершина" : sqBreakDn ? "пробой сжатия" : smcShortOk ? pendShortWhy + " ретест" : "вход"
+figLong = modeScalp ? (scalpBreakL ? "скальп пробой ↑" : scalpPullL ? "скальп EMA ↑" : smcLongOk ? pendLongWhy + " ретест" : "скальп лонг") : hsUp ? "голова-плечи ↑" : dblUp ? "двойное дно" : sqBreakUp ? "пробой сжатия" : smcLongOk ? pendLongWhy + " ретест" : "вход"
+figShort = modeScalp ? (scalpBreakS ? "скальп пробой ↓" : scalpPullS ? "скальп EMA ↓" : smcShortOk ? pendShortWhy + " ретест" : "скальп шорт") : hsDn ? "голова-плечи ↓" : dblDn ? "двойная вершина" : sqBreakDn ? "пробой сжатия" : smcShortOk ? pendShortWhy + " ретест" : "вход"
 
-longStop = longFire ? (hsUp and not na(hsExt) ? hsExt - 0.1 * atrV : dblUp and not na(extL) ? extL - 0.1 * atrV : sqBreakUp ? sqLow[1] - 0.1 * atrV : math.min(low, low[1], emaF) - 0.1 * atrV) : na
-shortStop = shortFire ? (hsDn and not na(hsExt) ? hsExt + 0.1 * atrV : dblDn and not na(extH) ? extH + 0.1 * atrV : sqBreakDn ? sqHigh[1] + 0.1 * atrV : math.max(high, high[1], emaF) + 0.1 * atrV) : na
+longStop = longFire ? (modeScalp ? math.min(low, low[1], microLo3) - 0.05 * atrV : hsUp and not na(hsExt) ? hsExt - 0.1 * atrV : dblUp and not na(extL) ? extL - 0.1 * atrV : sqBreakUp ? sqLow[1] - 0.1 * atrV : math.min(low, low[1], emaF) - 0.1 * atrV) : na
+shortStop = shortFire ? (modeScalp ? math.max(high, high[1], microHi3) + 0.05 * atrV : hsDn and not na(hsExt) ? hsExt + 0.1 * atrV : dblDn and not na(extH) ? extH + 0.1 * atrV : sqBreakDn ? sqHigh[1] + 0.1 * atrV : math.max(high, high[1], emaF) + 0.1 * atrV) : na
 longRisk = longFire ? close - longStop : na
 shortRisk = shortFire ? shortStop - close : na
 longTp = longFire and not na(longRisk) and longRisk > 0 ? close + rr * longRisk : na
@@ -1468,7 +1484,7 @@ if algoStyle and barstate.islast
     bool openNow = not na(actIdx) and actIdx < array.size(tOpen) and array.get(tOpen, actIdx)
     winRate = algoTrades > 0 ? algoTp / algoTrades * 100 : 0.0
     stopRate = algoTrades > 0 ? algoSl / algoTrades * 100 : 0.0
-    table.cell(algoDash, 0, 0, "65 ALGO", text_color = #F0B90B, text_size = size.normal)
+    table.cell(algoDash, 0, 0, "65 " + SCRIPT_VER, text_color = #F0B90B, text_size = size.normal)
     table.cell(algoDash, 1, 0, openNow ? (array.get(tSide, actIdx) > 0 ? "LONG" : "SHORT") : "READY", text_color = openNow ? (array.get(tSide, actIdx) > 0 ? #00E676 : #FF1744) : #EAECEF, text_size = size.large)
     table.cell(algoDash, 0, 1, "Setup", text_color = #848E9C, text_size = size.small)
     table.cell(algoDash, 1, 1, openNow ? array.get(tName, actIdx) : (not na(planBarKeep) and bar_index - planBarKeep <= signalBars ? planNameKeep : "—"), text_color = #EAECEF, text_size = size.small)
