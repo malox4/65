@@ -1,7 +1,7 @@
 //@version=6
-// 65 Map Algo FULL — SMC (BOS/CHoCH/SW/OB/FVG) + SK Fib + фигуры + скальп.
-// Метки короткие (tiny), чтобы график не схлопывался при зуме.
-indicator("65 Map Algo FULL", overlay = true, max_boxes_count = 200, max_lines_count = 200, max_labels_count = 200)
+// 65 Map Algo — полная карта БЕЗ поломки шкалы.
+// Всё есть (SMC/Fib/фигуры/скальп), но далеко от цены не рисуем + plotshape вместо жирных лейблов.
+indicator("65 Map Algo", overlay = true, max_boxes_count = 60, max_lines_count = 60, max_labels_count = 40)
 
 // ── inputs ──────────────────────────────────────────────────────────────
 grpTrend = "Trend"
@@ -104,11 +104,16 @@ trackOb = true
 trackFvg = true
 trackSweep = true
 fibLogicOn = true
-maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : 8)
+maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : 4)
+scalePadAtr = input.float(5.0, "Шкала: рисовать в пределах ATR", minval = 2.0, maxval = 20.0, step = 0.5, group = grpEntry, tooltip = "Уровни дальше N×ATR от цены не рисуются — график не схлопывается.")
 
 // ── helpers ─────────────────────────────────────────────────────────────
 word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
 col(v) => v > 0 ? #0ECB81 : v < 0 ? #F6465D : #848E9C
+nearPx(px) =>
+    float _a = ta.atr(atrLen)
+    not na(px) and not na(_a) and math.abs(px - close) <= scalePadAtr * _a
+nearBand(top, bot) => nearPx(top) or nearPx(bot) or (not na(top) and not na(bot) and close <= math.max(top, bot) and close >= math.min(top, bot))
 
 htfTrend(tf) =>
     f = request.security(syminfo.tickerid, tf, ta.ema(close, lenFast), lookahead = barmerge.lookahead_off)
@@ -195,9 +200,9 @@ trendFilter = modeScalp ? trend15 : trend4h
 htfLong = not needHtf or trendFilter == 1
 htfShort = not needHtf or trendFilter == -1
 
-plot(cleanChart ? na : emaF, "EMA20", color = #F0B90B)
-plot(cleanChart ? na : emaS, "EMA50", color = #848E9C)
-bgcolor(cleanChart ? na : trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
+plot(emaF, "EMA20", color = color.new(#F0B90B, 40), linewidth = 1)
+plot(emaS, "EMA50", color = color.new(#848E9C, 55), linewidth = 1)
+bgcolor(na)
 
 var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
 if barstate.islast and not cleanChart
@@ -255,18 +260,20 @@ if not na(sh1) and not na(sh2) and not na(sl1) and not na(sl2)
 if paintLevels and barstate.islast
     if not na(lvlHigh)
         line.delete(lvlHigh)
+        lvlHigh := na
     if not na(lvlLow)
         line.delete(lvlLow)
+        lvlLow := na
     if not na(lblHigh)
         label.delete(lblHigh)
+        lblHigh := na
     if not na(lblLow)
         label.delete(lblLow)
-    if not na(sh1)
-        lvlHigh := line.new(clampBar(sh1Bar), sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
-        lblHigh := label.new(bar_index + 3, sh1, "H " + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
-    if not na(sl1)
-        lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
-        lblLow := label.new(bar_index + 3, sl1, "L " + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
+        lblLow := na
+    if nearPx(sh1)
+        lvlHigh := line.new(clampBar(sh1Bar), sh1, bar_index + 2, sh1, color = color.new(#F6465D, 45), style = line.style_dotted, width = 1)
+    if nearPx(sl1)
+        lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 2, sl1, color = color.new(#0ECB81, 45), style = line.style_dotted, width = 1)
 
 if barstate.islast and not cleanChart
     table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
@@ -304,19 +311,11 @@ isChoChDn = bosDn and structure > 0
 isBosUp = bosUp and not isChoChUp
 isBosDn = bosDn and not isChoChDn
 
-// карта всегда: CHoCH / BOS / снятие (алго-сделка рисуется отдельно)
-if paintBos and isBosUp
-    array.push(eventLabels, label.new(bar_index, low, "BOS↑", style = label.style_label_up, color = color.new(#26A69A, 30), textcolor = color.white, size = size.tiny))
-    trimLabels(eventLabels, 8)
-if paintBos and isBosDn
-    array.push(eventLabels, label.new(bar_index, high, "BOS↓", style = label.style_label_down, color = color.new(#26A69A, 30), textcolor = color.white, size = size.tiny))
-    trimLabels(eventLabels, 8)
-if paintBos and isChoChUp
-    array.push(eventLabels, label.new(bar_index, low, "CHoCH↑", style = label.style_label_up, color = color.new(#F0B90B, 25), textcolor = color.black, size = size.tiny))
-    trimLabels(eventLabels, 8)
-if paintBos and isChoChDn
-    array.push(eventLabels, label.new(bar_index, high, "CHoCH↓", style = label.style_label_down, color = color.new(#F0B90B, 25), textcolor = color.black, size = size.tiny))
-    trimLabels(eventLabels, 8)
+// BOS/CHoCH маркеры — plotshape ниже (не ломают шкалу)
+plotshape(paintBos and isBosUp, title = "BOS↑", style = shape.triangleup, location = location.belowbar, color = color.new(#26A69A, 0), size = size.tiny, text = "BOS", textcolor = #26A69A)
+plotshape(paintBos and isBosDn, title = "BOS↓", style = shape.triangledown, location = location.abovebar, color = color.new(#26A69A, 0), size = size.tiny, text = "BOS", textcolor = #26A69A)
+plotshape(paintBos and isChoChUp, title = "CHoCH↑", style = shape.triangleup, location = location.belowbar, color = color.new(#F0B90B, 0), size = size.tiny, text = "CHoCH", textcolor = #F0B90B)
+plotshape(paintBos and isChoChDn, title = "CHoCH↓", style = shape.triangledown, location = location.abovebar, color = color.new(#F0B90B, 0), size = size.tiny, text = "CHoCH", textcolor = #F0B90B)
 
 if trackOb and (isBosUp or isChoChUp)
     [obi, obh, obl] = findBullOb()
@@ -324,37 +323,31 @@ if trackOb and (isBosUp or isChoChUp)
         array.push(obTops, obh)
         array.push(obBots, obl)
         array.push(obTypes, 1)
-        if paintOb
-            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#7C4DFF, 55), bgcolor = color.new(#7C4DFF, 88), border_width = 1, text = "OB", text_color = #B388FF, text_size = size.tiny))
-        trimZonePair(obTops, obBots, obTypes, obBoxes, paintOb ? math.min(obMax, 2) : 2)
+        while array.size(obTypes) > 2
+            array.shift(obTops)
+            array.shift(obBots)
+            array.shift(obTypes)
 if trackOb and (isBosDn or isChoChDn)
     [obi, obh, obl] = findBearOb()
     if not na(obi)
         array.push(obTops, obh)
         array.push(obBots, obl)
         array.push(obTypes, -1)
-        if paintOb
-            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#D500F9, 55), bgcolor = color.new(#AA00FF, 88), border_width = 1, text = "OB", text_color = #E040FB, text_size = size.tiny))
-        trimZonePair(obTops, obBots, obTypes, obBoxes, paintOb ? math.min(obMax, 2) : 2)
+        while array.size(obTypes) > 2
+            array.shift(obTops)
+            array.shift(obBots)
+            array.shift(obTypes)
 
 if trackOb and array.size(obTypes) > 0
     for i = array.size(obTypes) - 1 to 0
         float oTop = array.get(obTops, i)
         float oBot = array.get(obBots, i)
         int oTp = array.get(obTypes, i)
-        if paintOb and i < array.size(obBoxes)
-            box.set_right(array.get(obBoxes, i), bar_index + 2)
         if oTp == 1 and close < oBot
-            if paintOb and i < array.size(obBoxes)
-                box.delete(array.get(obBoxes, i))
-                array.remove(obBoxes, i)
             array.remove(obTops, i)
             array.remove(obBots, i)
             array.remove(obTypes, i)
         else if oTp == -1 and close > oTop
-            if paintOb and i < array.size(obBoxes)
-                box.delete(array.get(obBoxes, i))
-                array.remove(obBoxes, i)
             array.remove(obTops, i)
             array.remove(obBots, i)
             array.remove(obTypes, i)
@@ -372,14 +365,24 @@ if array.size(obTypes) > 0
             if oTp == -1
                 inBearOb := true
 
+// OB boxes: только рядом с ценой, пересобираем на последнем баре
+if barstate.islast
+    while array.size(obBoxes) > 0
+        box.delete(array.shift(obBoxes))
+    if paintOb and array.size(obTypes) > 0
+        for i = 0 to array.size(obTypes) - 1
+            float oTop = array.get(obTops, i)
+            float oBot = array.get(obBots, i)
+            int oTp = array.get(obTypes, i)
+            if nearBand(oTop, oBot)
+                color bc = oTp == 1 ? color.new(#7C4DFF, 60) : color.new(#D500F9, 60)
+                color bg = oTp == 1 ? color.new(#7C4DFF, 92) : color.new(#AA00FF, 92)
+                array.push(obBoxes, box.new(bar_index - 8, oTop, bar_index + 2, oBot, border_color = bc, bgcolor = bg, border_width = 1))
+
 sweepUp = ok and trackSweep and not na(sh1) and high > sh1 and close < sh1 and close < open
 sweepDn = ok and trackSweep and not na(sl1) and low < sl1 and close > sl1 and close > open
-if paintSweep and sweepUp
-    array.push(eventLabels, label.new(bar_index, high, "SW↑", style = label.style_label_down, color = color.new(#FF6D00, 35), textcolor = color.white, size = size.tiny))
-    trimLabels(eventLabels, 8)
-if paintSweep and sweepDn
-    array.push(eventLabels, label.new(bar_index, low, "SW↓", style = label.style_label_up, color = color.new(#FF6D00, 35), textcolor = color.white, size = size.tiny))
-    trimLabels(eventLabels, 8)
+plotshape(paintSweep and sweepUp, title = "SW↑", style = shape.xcross, location = location.abovebar, color = color.new(#FF6D00, 0), size = size.tiny, text = "SW", textcolor = #FF6D00)
+plotshape(paintSweep and sweepDn, title = "SW↓", style = shape.xcross, location = location.belowbar, color = color.new(#FF6D00, 0), size = size.tiny, text = "SW", textcolor = #FF6D00)
 
 bullGap = ok and trackFvg and low > high[2] and (low - high[2]) >= fvgMinAtr * atrV
 bearGap = ok and trackFvg and high < low[2] and (low[2] - high) >= fvgMinAtr * atrV
@@ -387,35 +390,29 @@ if bullGap
     array.push(fvgTops, low)
     array.push(fvgBots, high[2])
     array.push(fvgTypes, 1)
-    if paintFvg
-        array.push(fvgBoxes, box.new(bar_index - 2, low, bar_index + 25, high[2], border_color = color.new(#00BCD4, 30), bgcolor = color.new(#00BCD4, 82), border_width = 1, text = "FVG↑", text_color = #00E5FF, text_size = size.tiny))
-    trimZonePair(fvgTops, fvgBots, fvgTypes, fvgBoxes, paintFvg ? math.min(fvgMax, 2) : 2)
+    while array.size(fvgTypes) > 2
+        array.shift(fvgTops)
+        array.shift(fvgBots)
+        array.shift(fvgTypes)
 if bearGap
     array.push(fvgTops, low[2])
     array.push(fvgBots, high)
     array.push(fvgTypes, -1)
-    if paintFvg
-        array.push(fvgBoxes, box.new(bar_index - 2, low[2], bar_index + 25, high, border_color = color.new(#FF4081, 30), bgcolor = color.new(#FF4081, 82), border_width = 1, text = "FVG↓", text_color = #FF80AB, text_size = size.tiny))
-    trimZonePair(fvgTops, fvgBots, fvgTypes, fvgBoxes, paintFvg ? math.min(fvgMax, 2) : 2)
+    while array.size(fvgTypes) > 2
+        array.shift(fvgTops)
+        array.shift(fvgBots)
+        array.shift(fvgTypes)
 
 if trackFvg and array.size(fvgTypes) > 0
     for i = array.size(fvgTypes) - 1 to 0
         float fTop = array.get(fvgTops, i)
         float fBot = array.get(fvgBots, i)
         int fTp = array.get(fvgTypes, i)
-        if paintFvg and i < array.size(fvgBoxes)
-            box.set_right(array.get(fvgBoxes, i), bar_index + 2)
         if fTp == 1 and low <= fBot
-            if paintFvg and i < array.size(fvgBoxes)
-                box.delete(array.get(fvgBoxes, i))
-                array.remove(fvgBoxes, i)
             array.remove(fvgTops, i)
             array.remove(fvgBots, i)
             array.remove(fvgTypes, i)
         else if fTp == -1 and high >= fTop
-            if paintFvg and i < array.size(fvgBoxes)
-                box.delete(array.get(fvgBoxes, i))
-                array.remove(fvgBoxes, i)
             array.remove(fvgTops, i)
             array.remove(fvgBots, i)
             array.remove(fvgTypes, i)
@@ -433,6 +430,19 @@ if array.size(fvgTypes) > 0
             if fTp == -1
                 inBearFvg := true
 
+if barstate.islast
+    while array.size(fvgBoxes) > 0
+        box.delete(array.shift(fvgBoxes))
+    if paintFvg and array.size(fvgTypes) > 0
+        for i = 0 to array.size(fvgTypes) - 1
+            float fTop = array.get(fvgTops, i)
+            float fBot = array.get(fvgBots, i)
+            int fTp = array.get(fvgTypes, i)
+            if nearBand(fTop, fBot)
+                color bc = fTp == 1 ? color.new(#00BCD4, 55) : color.new(#FF4081, 55)
+                color bg = fTp == 1 ? color.new(#00BCD4, 92) : color.new(#FF4081, 92)
+                array.push(fvgBoxes, box.new(bar_index - 6, fTop, bar_index + 2, fBot, border_color = bc, bgcolor = bg, border_width = 1))
+
 sqHigh = ta.highest(high, sqBars)
 sqLow = ta.lowest(low, sqBars)
 inSqueeze = (sqHigh - sqLow) <= sqAtr * atrV and (sqHigh - sqLow) > 0
@@ -442,7 +452,7 @@ var box sqBox = na
 if paintFig and showSqueeze
     if inSqueeze
         if na(sqBox)
-            sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 25), bgcolor = color.new(#F0B90B, 92), border_style = line.style_dashed, text = "SQ", text_color = #F0B90B, text_size = size.tiny)
+            sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 40), bgcolor = color.new(#F0B90B, 94), border_style = line.style_dashed)
         else
             box.set_right(sqBox, bar_index)
             box.set_top(sqBox, sqHigh)
@@ -453,6 +463,9 @@ if paintFig and showSqueeze
 else if not na(sqBox)
     box.delete(sqBox)
     sqBox := na
+
+plotshape(paintFig and showSqueeze and sqBreakUp, title = "SQ↑", style = shape.diamond, location = location.belowbar, color = #F0B90B, size = size.tiny, text = "SQ", textcolor = #F0B90B)
+plotshape(paintFig and showSqueeze and sqBreakDn, title = "SQ↓", style = shape.diamond, location = location.abovebar, color = #F0B90B, size = size.tiny, text = "SQ", textcolor = #F0B90B)
 
 var float p1L = na
 var float p2L = na
@@ -501,12 +514,12 @@ if paintFig and showDouble and barstate.islast
         label.delete(neckWaitH)
     allowWaitUp = not sharpOnly or trend4h >= 0
     allowWaitDn = not sharpOnly or trend4h <= 0
-    if allowWaitUp and not na(neckL) and not na(extL) and close <= neckL
+    if allowWaitUp and not na(neckL) and not na(extL) and close <= neckL and nearPx(neckL)
         neckLineL := line.new(clampBar(p2Lb), neckL, bar_index + 2, neckL, color = #0ECB81, style = line.style_dashed)
-        neckWaitL := label.new(bar_index + 2, neckL, "DBL↑", style = label.style_label_left, color = color.new(#0ECB81, 20), textcolor = color.white, size = size.tiny)
-    if allowWaitDn and not na(neckH) and not na(extH) and close >= neckH
+        neckWaitL := label.new(bar_index + 2, neckL, "DBL↑", style = label.style_label_left, color = color.new(#0ECB81, 40), textcolor = color.white, size = size.tiny)
+    if allowWaitDn and not na(neckH) and not na(extH) and close >= neckH and nearPx(neckH)
         neckLineH := line.new(clampBar(p2Hb), neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
-        neckWaitH := label.new(bar_index + 2, neckH, "DBL↓", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.tiny)
+        neckWaitH := label.new(bar_index + 2, neckH, "DBL↓", style = label.style_label_left, color = color.new(#F6465D, 40), textcolor = color.white, size = size.tiny)
 
 rawDblUp = showDouble and ok and not na(neckL) and close > neckL and close[1] <= neckL and not na(extL) and neckL - extL >= atrV
 rawDblDn = showDouble and ok and not na(neckH) and close < neckH and close[1] >= neckH and not na(extH) and extH - neckH >= atrV
@@ -664,18 +677,20 @@ if paintFig and showHs and barstate.islast
     hsLsLn := na
     hsRsLn := na
     hsLbl := na
-    if hsSide != 0 and not na(hsNeck) and not na(hsExt) and not na(hsLsB) and not na(hsRsB) and not na(hsLsPx) and not na(hsRsPx)
+    if hsSide != 0 and not na(hsNeck) and not na(hsExt) and not na(hsLsB) and not na(hsRsB) and not na(hsLsPx) and not na(hsRsPx) and nearPx(hsNeck)
         color hsC = hsSide > 0 ? #0ECB81 : #F6465D
         int hsX0 = clampBar(hsLsB)
         int hsXh = clampBar(hsHeadB)
         int hsXr = clampBar(hsRsB)
-        hsNeckLn := line.new(hsX0, hsNeck, bar_index + 2, hsNeck, color = hsC, style = line.style_solid, width = 2)
-        hsLsLn := line.new(hsX0, hsLsPx, hsXh, hsExt, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
-        hsRsLn := line.new(hsXh, hsExt, hsXr, hsRsPx, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
+        hsNeckLn := line.new(hsX0, hsNeck, bar_index + 2, hsNeck, color = hsC, style = line.style_solid, width = 1)
+        // плечи только если рядом с ценой — иначе шкала разъедется
+        if nearPx(hsExt) and nearPx(hsLsPx) and nearPx(hsRsPx)
+            hsLsLn := line.new(hsX0, hsLsPx, hsXh, hsExt, color = color.new(hsC, 35), style = line.style_dotted, width = 1)
+            hsRsLn := line.new(hsXh, hsExt, hsXr, hsRsPx, color = color.new(hsC, 35), style = line.style_dotted, width = 1)
         string hsTxt = hsSide > 0 ? "iH&S↑" : "H&S↓"
         bool stillWait = hsSide > 0 ? close <= hsNeck : close >= hsNeck
         if stillWait
-            hsLbl := label.new(bar_index + 2, hsNeck, hsTxt, style = label.style_label_left, color = color.new(hsC, 35), textcolor = color.white, size = size.tiny)
+            hsLbl := label.new(bar_index + 2, hsNeck, hsTxt, style = label.style_label_left, color = color.new(hsC, 45), textcolor = color.white, size = size.tiny)
 
 rawHsUp = showHs and ok and hsSide > 0 and not na(hsNeck) and not na(hsExt) and close > hsNeck and close[1] <= hsNeck and hsNeck - hsExt >= atrV
 rawHsDn = showHs and ok and hsSide < 0 and not na(hsNeck) and not na(hsExt) and close < hsNeck and close[1] >= hsNeck and hsExt - hsNeck >= atrV
@@ -687,6 +702,11 @@ if hsDn
     usedHsDn := bar_index
 waitHsUp = showHs and hsSide > 0 and not na(hsNeck) and not na(hsExt) and close <= hsNeck
 waitHsDn = showHs and hsSide < 0 and not na(hsNeck) and not na(hsExt) and close >= hsNeck
+
+plotshape(paintFig and showDouble and rawDblUp, title = "DBL↑", style = shape.circle, location = location.belowbar, color = #0ECB81, size = size.tiny, text = "DBL", textcolor = #0ECB81)
+plotshape(paintFig and showDouble and rawDblDn, title = "DBL↓", style = shape.circle, location = location.abovebar, color = #F6465D, size = size.tiny, text = "DBL", textcolor = #F6465D)
+plotshape(paintFig and showHs and rawHsUp, title = "HS↑", style = shape.circle, location = location.belowbar, color = #42A5F5, size = size.tiny, text = "H&S", textcolor = #42A5F5)
+plotshape(paintFig and showHs and rawHsDn, title = "HS↓", style = shape.circle, location = location.abovebar, color = #42A5F5, size = size.tiny, text = "H&S", textcolor = #42A5F5)
 
 // Potential entries: после CHoCH/BOS ждём РЕТЕСТ (OB / FVG / EMA), не сам бар пробоя
 var int pendLongBar = na
@@ -947,42 +967,23 @@ if barstate.islast
     if not na(fibZoneBox)
         box.delete(fibZoneBox)
         fibZoneBox := na
-    if paintFib and skDown
-        int x0 = clampBar(skABar)
-        int x1 = bar_index + 4
-        array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
-        array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = #F0B90B, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skZ0, str.tostring(fibZoneLo, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
-        array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = #F0B90B, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skZ1, str.tostring(fibZoneHi, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
-        array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "0.5–0.618 S", text_color = #A78BFA, text_size = size.tiny)
-        fibState := close < skZoneBot ? "ждём откат ↑ в 0.5–0.618" : inSkShortZone ? "в зоне · ждём медв. свечу" : "выше 0.618 · стоп-зона"
-    else if paintFib and skUp
-        int x0 = clampBar(skABar)
-        int x1 = bar_index + 4
-        array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
-        array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = #F0B90B, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skZ0, str.tostring(fibZoneLo, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
-        array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = #F0B90B, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skZ1, str.tostring(fibZoneHi, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
-        array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "0.5–0.618 L", text_color = #A78BFA, text_size = size.tiny)
-        fibState := close > skZoneTop ? "ждём откат ↓ в 0.5–0.618" : inSkLongZone ? "в зоне · ждём быч. свечу" : "ниже 0.618 · стоп-зона"
+    // только зона 0.5–0.618 рядом с ценой — без дальних 0 / 1.0 / 1.272 / 1.618 (они ломают шкалу)
+    if paintFib and skDown and nearBand(skZoneTop, skZoneBot)
+        int x0 = math.max(clampBar(skABar), bar_index - 40)
+        int x1 = bar_index + 3
+        array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = color.new(#F0B90B, 20), style = line.style_solid, width = 1))
+        array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = color.new(#F0B90B, 20), style = line.style_solid, width = 1))
+        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 55), bgcolor = color.new(#8B5CF6, 92))
+        fibState := close < skZoneBot ? "ждём откат ↑" : inSkShortZone ? "в зоне S" : "выше зоны"
+    else if paintFib and skUp and nearBand(skZoneTop, skZoneBot)
+        int x0 = math.max(clampBar(skABar), bar_index - 40)
+        int x1 = bar_index + 3
+        array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = color.new(#F0B90B, 20), style = line.style_solid, width = 1))
+        array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = color.new(#F0B90B, 20), style = line.style_solid, width = 1))
+        fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 55), bgcolor = color.new(#8B5CF6, 92))
+        fibState := close > skZoneTop ? "ждём откат ↓" : inSkLongZone ? "в зоне L" : "ниже зоны"
     else if fibLogicOn
-        fibState := not na(skA) and na(skB) ? (skSide < 0 ? "ждём low импульса ↓" : "ждём high импульса ↑") : "импульса нет"
+        fibState := paintFib and (skDown or skUp) ? "зона далеко — в карточке" : (not na(skA) and na(skB) ? (skSide < 0 ? "ждём low импульса" : "ждём high импульса") : "импульса нет")
     if not cleanChart
         table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
 
@@ -1297,9 +1298,9 @@ if algoStyle and planEnter
 
     int xR = bar_index + useHorizon
     if planSide > 0
-        actBuySell := label.new(bar_index, low, modeScalp ? "BUY SCALP" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.normal)
+        actBuySell := label.new(bar_index, low, modeScalp ? "BUY" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.small)
     else
-        actBuySell := label.new(bar_index, high, modeScalp ? "SELL SCALP" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.normal)
+        actBuySell := label.new(bar_index, high, modeScalp ? "SELL" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.small)
     if planSide > 0
         actSl := box.new(bar_index, planEntry, xR, planStop, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
         actTpZone := box.new(bar_index, p3, xR, planEntry, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
