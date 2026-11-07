@@ -1,0 +1,273 @@
+//@version=6
+// Урок 10.03.2023: сессии Азия/Европа/Америка + маржинальные зоны 25/50/100%.
+// Один понятный статус: ЖДИ / СЕЙЧАС / ОПОЗДАЛ. Старые уроки не трогаем.
+indicator("Урок · Сессии+Маржа", overlay = true, max_boxes_count = 60, max_lines_count = 20, max_labels_count = 20)
+
+grpS = "Сессии (UTC)"
+asia   = input.session("0000-0800", "Азия", group = grpS)
+europe = input.session("0700-1600", "Европа", group = grpS)
+america = input.session("1300-2200", "Америка", group = grpS)
+colAsia = input.color(color.new(#3D5A3D, 88), "Цвет Азия", group = grpS)
+colEu   = input.color(color.new(#3D3D6B, 88), "Цвет Европа", group = grpS)
+colAm   = input.color(color.new(#5A3D3D, 88), "Цвет Америка", group = grpS)
+
+grpZ = "Маржинальные зоны"
+swingLen = input.int(5, "Swing базы", minval = 2, maxval = 15, group = grpZ)
+dirDown  = input.bool(true, "Направление вниз (от хая)", group = grpZ)
+distAtr  = input.float(8.0, "Дистанция 100% = ATR ×", minval = 2.0, step = 0.5, group = grpZ)
+atrLen   = input.int(14, "ATR", group = grpZ)
+zoneW    = input.float(0.12, "Толщина зоны × ATR", minval = 0.05, step = 0.05, group = grpZ)
+tpR      = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grpZ)
+liveAtr  = input.float(0.4, "СЕЙЧАС если цена ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grpZ)
+freshBars = input.int(3, "Сигнал держать N свечей", minval = 1, maxval = 8, group = grpZ)
+needEng  = input.bool(true, "Нужно поглощение у зоны", group = grpZ)
+
+col25  = #87CEFA
+col50  = #B7CEEB
+col100 = #800000
+colBase = #808080
+colGo = #0ECB81
+colStop = #F6465D
+colTp = #3B82F6
+colWait = #848E9C
+colLate = #F6465D
+
+atr = ta.atr(atrLen)
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+bull = close > open and close > high[1] and open <= low[1]
+bear = close < open and close < low[1] and open >= high[1]
+
+// ——— сессии: фон ———
+inAsia = not na(time(timeframe.period, asia))
+inEu   = not na(time(timeframe.period, europe))
+inAm   = not na(time(timeframe.period, america))
+bgcolor(inAm ? colAm : inEu ? colEu : inAsia ? colAsia : na, title = "Сессия")
+
+sessName = inAm ? "АМЕРИКА" : inEu ? "ЕВРОПА" : inAsia ? "АЗИЯ" : "ВНЕ ОКОН"
+
+// ——— база и зоны 25/50/100 ———
+var float base = na
+var int baseBorn = na
+
+if dirDown and not na(ph)
+    base := ph
+    baseBorn := bar_index - swingLen
+if not dirDown and not na(pl)
+    base := pl
+    baseBorn := bar_index - swingLen
+
+dist = atr * distAtr
+thick = atr * zoneW
+
+float z25 = na
+float z50 = na
+float z100 = na
+if not na(base) and not na(dist) and dist > 0
+    if dirDown
+        z25 := base - 0.25 * dist
+        z50 := base - 0.50 * dist
+        z100 := base - 1.00 * dist
+    else
+        z25 := base + 0.25 * dist
+        z50 := base + 0.50 * dist
+        z100 := base + 1.00 * dist
+
+// касание зоны на этой свече
+hit25 = not na(z25) and low <= z25 + thick and high >= z25 - thick
+hit50 = not na(z50) and low <= z50 + thick and high >= z50 - thick
+hit100 = not na(z100) and low <= z100 + thick and high >= z100 - thick
+
+// реакция: отбой от зоны (защита) — вход НА зоне
+float entry = na
+float stop = na
+float take = na
+int side = 0
+string mode = ""
+string which = ""
+
+if hit25 or hit50 or hit100
+    zHit = hit100 ? z100 : hit50 ? z50 : z25
+    wh = hit100 ? "100%" : hit50 ? "50%" : "25%"
+    if dirDown
+        // отбой вверх = лонг от зоны
+        if close > zHit and close > open and (not needEng or bull)
+            e = zHit
+            s = zHit - thick - atr * 0.1
+            r = e - s
+            if r > 0
+                entry := e
+                stop := s
+                take := e + tpR * r
+                side := 1
+                mode := "ОТБОЙ"
+                which := wh
+        // пробой вниз через зону
+        if na(entry) and close < zHit - thick and close[1] >= zHit - thick
+            e = zHit
+            s = zHit + thick + atr * 0.1
+            r = s - e
+            if r > 0
+                entry := e
+                stop := s
+                take := e - tpR * r
+                side := -1
+                mode := "ПРОБОЙ"
+                which := wh
+    else
+        if close < zHit and close < open and (not needEng or bear)
+            e = zHit
+            s = zHit + thick + atr * 0.1
+            r = s - e
+            if r > 0
+                entry := e
+                stop := s
+                take := e - tpR * r
+                side := -1
+                mode := "ОТБОЙ"
+                which := wh
+        if na(entry) and close > zHit + thick and close[1] <= zHit + thick
+            e = zHit
+            s = zHit - thick - atr * 0.1
+            r = e - s
+            if r > 0
+                entry := e
+                stop := s
+                take := e + tpR * r
+                side := 1
+                mode := "ПРОБОЙ"
+                which := wh
+
+var float eMem = na
+var float sMem = na
+var float tMem = na
+var int sideMem = 0
+var string modeMem = ""
+var string whichMem = ""
+var int bornMem = na
+
+if not na(entry)
+    eMem := entry
+    sMem := stop
+    tMem := take
+    sideMem := side
+    modeMem := mode
+    whichMem := which
+    bornMem := bar_index
+
+sigAge = na(bornMem) ? 1000 : bar_index - bornMem
+haveSig = not na(eMem) and sigAge <= freshBars
+
+if haveSig
+    entry := eMem
+    stop := sMem
+    take := tMem
+    side := sideMem
+    mode := modeMem
+    which := whichMem
+else
+    eMem := na
+    sMem := na
+    tMem := na
+    sideMem := 0
+    modeMem := ""
+    whichMem := ""
+    bornMem := na
+    entry := na
+    stop := na
+    take := na
+    side := 0
+    mode := ""
+    which := ""
+
+nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
+late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
+status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+
+// ——— рисунок только last ———
+var line lnBase = na
+var line ln25 = na
+var line ln50 = na
+var line ln100 = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var box b25 = na
+var box b50 = na
+var box b100 = na
+var label lb = na
+var label lbE = na
+var label lbS = na
+var label lbT = na
+var label lb25 = na
+var label lb50 = na
+var label lb100 = na
+var label lbBase = na
+
+if barstate.islast
+    line.delete(lnBase)
+    line.delete(ln25)
+    line.delete(ln50)
+    line.delete(ln100)
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    box.delete(b25)
+    box.delete(b50)
+    box.delete(b100)
+    label.delete(lb)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT)
+    label.delete(lb25)
+    label.delete(lb50)
+    label.delete(lb100)
+    label.delete(lbBase)
+
+    x1 = na(baseBorn) ? bar_index - 40 : math.max(baseBorn, bar_index - 80)
+    x2 = bar_index + 8
+
+    if not na(base)
+        lnBase := line.new(x1, base, x2, base, color = colBase, width = 2)
+        lbBase := label.new(x2, base, "БАЗА", style = label.style_label_left, color = color.new(colBase, 20), textcolor = color.white, size = size.small)
+    if not na(z25)
+        b25 := box.new(x1, z25 + thick, x2, z25 - thick, bgcolor = color.new(col25, 75), border_color = col25)
+        lb25 := label.new(x2, z25, "ЗОНА 25%", style = label.style_label_left, color = color.new(col25, 20), textcolor = #111, size = size.small)
+    if not na(z50)
+        b50 := box.new(x1, z50 + thick, x2, z50 - thick, bgcolor = color.new(col50, 75), border_color = col50)
+        lb50 := label.new(x2, z50, "ЗОНА 50%", style = label.style_label_left, color = color.new(col50, 20), textcolor = #111, size = size.small)
+    if not na(z100)
+        b100 := box.new(x1, z100 + thick, x2, z100 - thick, bgcolor = color.new(col100, 70), border_color = col100)
+        lb100 := label.new(x2, z100, "ЗОНА 100%", style = label.style_label_left, color = color.new(col100, 10), textcolor = color.white, size = size.small)
+
+    if status == "WAIT"
+        lb := label.new(x2, close, "ЖДИ\nсессия: " + sessName + "\nжди реакцию у зоны 25/50/100%", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+    else if status == "LATE"
+        lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй\nсессия: " + sessName, style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
+    else if status == "WAIT_FILL"
+        lb := label.new(x2, entry, mode + " · зона " + which + "\nжди цену К зелёной\nне бери в воздухе", style = label.style_label_left, color = color.new(#F0B90B, 10), textcolor = color.white, size = size.normal)
+        lnE := line.new(bar_index - 2, entry, x2, entry, color = colGo, width = 3)
+        lnS := line.new(bar_index - 2, stop, x2, stop, color = colStop, width = 2)
+        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 2)
+        lbE := label.new(x2, entry, "ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "СТОП", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+    else
+        sideTxt = side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС"
+        lb := label.new(x2, entry, sideTxt + "\n" + mode + " зоны " + which + "\nсессия " + sessName, style = label.style_label_left, color = color.new(colGo, 0), textcolor = color.white, size = size.large)
+        lnE := line.new(bar_index - 2, entry, x2, entry, color = colGo, width = 4)
+        lnS := line.new(bar_index - 2, stop, x2, stop, color = colStop, width = 3)
+        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 3)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
+        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+
+var table t = table.new(position.bottom_right, 1, 4, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди цену к зелёной" : "⏳ ЖДИ · " + sessName
+    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : #F0B90B, text_size = size.large)
+    table.cell(t, 0, 1, haveSig ? (mode + " " + which + " | вход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "урок: сессия + реакция у зоны 25/50/100%", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "сессия сейчас: " + sessName, text_color = #848E9C, text_size = size.small)
+    table.cell(t, 0, 3, "файл: tradingview/lesson_sessions_margin.pine", text_color = #848E9C, text_size = size.tiny)
+
+alertcondition(status == "NOW", "Сейчас вход", "Урок сессии+маржа: вход СЕЙЧАС")
