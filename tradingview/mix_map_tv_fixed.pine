@@ -1,6 +1,7 @@
 //@version=6
-// 65 Map Algo — твоя TV-версия (карта всегда) + фикс RE10026 (Fib line слишком далеко)
-indicator("65 Map Algo", overlay = true, max_boxes_count = 300, max_lines_count = 300, max_labels_count = 300)
+// 65 Map Algo CLEAN — график как без спама: только EMA + 1 сделка + карточки.
+// Логика SMC/Fib/Scalp считает внутри; метки BOS/CHoCH/Fib/OB по умолчанию ВЫКЛ.
+indicator("65 Map Algo CLEAN", overlay = true, max_boxes_count = 40, max_lines_count = 40, max_labels_count = 40)
 
 // ── inputs ──────────────────────────────────────────────────────────────
 grpTrend = "Trend"
@@ -10,26 +11,26 @@ tf4h     = input.timeframe("240", "HTF 4h", group = grpTrend)
 
 grpSmc = "Smart Money"
 swingLen   = input.int(5, "Swing wing", minval = 2, maxval = 10, group = grpSmc)
-showLevels = input.bool(true, "Структурные уровни", group = grpSmc)
-showBos    = input.bool(true, "BOS / CHoCH", group = grpSmc)
-showOb     = input.bool(true, "Order Block", group = grpSmc)
-showSweep  = input.bool(true, "Снятие ликвидности", group = grpSmc)
-showFvg    = input.bool(true, "FVG имбаланс", group = grpSmc)
+showLevels = input.bool(false, "Структурные уровни", group = grpSmc)
+showBos    = input.bool(false, "BOS / CHoCH", group = grpSmc)
+showOb     = input.bool(false, "Order Block", group = grpSmc)
+showSweep  = input.bool(false, "Снятие ликвидности", group = grpSmc)
+showFvg    = input.bool(false, "FVG имбаланс", group = grpSmc)
 fvgMinAtr  = input.float(0.25, "Мин FVG в ATR", minval = 0.05, step = 0.05, group = grpSmc)
 fvgMax     = input.int(5, "Макс FVG", minval = 1, maxval = 15, group = grpSmc)
 obMax      = input.int(4, "Макс Order Block", minval = 1, maxval = 10, group = grpSmc)
 
 grpFig = "Figures"
-showSqueeze = input.bool(true, "Сжатие", group = grpFig)
+showSqueeze = input.bool(false, "Сжатие", group = grpFig)
 sqBars      = input.int(12, "Свечей сжатия", group = grpFig)
 sqAtr       = input.float(2.5, "Ширина сжатия ATR", group = grpFig)
-showDouble  = input.bool(true, "Двойное дно/вершина", group = grpFig)
+showDouble  = input.bool(false, "Двойное дно/вершина", group = grpFig)
 dblTol      = input.float(0.35, "Допуск уровней ATR", group = grpFig)
-showHs      = input.bool(true, "Голова и плечи", group = grpFig)
+showHs      = input.bool(false, "Голова и плечи", group = grpFig)
 hsTol       = input.float(0.45, "Допуск плеч ATR", group = grpFig)
 
 grpFib = "SK Fib (как в видео TradersNotes)"
-showFib     = input.bool(true, "SK Fib сетап", group = grpFib)
+showFib     = input.bool(false, "SK Fib сетап (рисовать зону)", group = grpFib)
 fibPivot    = input.int(5, "Pivot импульса", minval = 2, maxval = 20, group = grpFib, tooltip = "Как в видео: импульс = подтверждённый swing high → swing low (шорт) или low → high (лонг), не скользящее окно.")
 fibMinAtr   = input.float(2.0, "Мин импульс в ATR", minval = 0.5, step = 0.5, group = grpFib)
 fibZoneLo   = input.float(0.5, "Зона отката от", minval = 0.3, maxval = 0.7, step = 0.01, group = grpFib, tooltip = "В книге SK: зона 0.5–0.618")
@@ -57,7 +58,7 @@ sharpOnly   = input.bool(true, "Точечный режим: только ВХО
 algoStyle   = input.bool(true, "Стиль алго Buy/Sell + TP1/2/3", group = grpEntry, tooltip = "Одна активная сделка: SL-зона + TP1/TP2/TP3. История — мелкие ▲/▼ с TP✓ или SL✗.")
 signalBars  = input.int(3, "Сигнал в карточке (свечей)", minval = 1, maxval = 8, group = grpEntry)
 tradeHorizon = input.int(48, "Горизонт сделки (свечей)", minval = 8, maxval = 200, group = grpEntry)
-maxHistTrades = input.int(20, "Сколько меток истории", minval = 5, maxval = 40, group = grpEntry)
+maxHistTrades = input.int(3, "Сколько меток истории", minval = 1, maxval = 10, group = grpEntry)
 tp1R = input.float(1.0, "TP1 в R (не Scalp)", step = 0.25, group = grpEntry)
 tp2R = input.float(2.0, "TP2 в R (не Scalp)", step = 0.25, group = grpEntry)
 tp3R = input.float(3.0, "TP3 в R (не Scalp)", step = 0.25, group = grpEntry)
@@ -78,6 +79,7 @@ confirmBars = input.int(12, "Окно ретеста после CHoCH/BOS", minv
 cooldown    = input.int(12, "Пауза между входами", minval = 4, group = grpEntry)
 rr          = input.float(2.0, "Цель в R (метки без алго)", group = grpEntry)
 atrLen      = input.int(14, "ATR", group = grpEntry)
+cleanChart = input.bool(true, "Чистый график (как без меток)", group = grpEntry, tooltip = "Вкл = только EMA + карточки + 1 активная сделка. BOS/Fib/OB/метки не рисуются, логика считается.")
 modeSk = entryMode == "SK Fib"
 modeSmc = entryMode == "SMC+"
 modeAll = entryMode == "Всё"
@@ -88,6 +90,21 @@ useTp3R = modeScalp ? scalpTp3 : tp3R
 useHorizon = modeScalp ? scalpHorizon : tradeHorizon
 useConfirm = modeScalp ? math.min(confirmBars, 6) : confirmBars
 useCooldown = modeScalp ? math.min(cooldown, 5) : cooldown
+// рисовать карту только если cleanChart выкл
+paintMap = not cleanChart
+paintBos = paintMap and showBos
+paintOb = paintMap and showOb
+paintSweep = paintMap and showSweep
+paintFvg = paintMap and showFvg
+paintFib = paintMap and showFib
+paintFig = paintMap
+paintLevels = paintMap and showLevels
+// логика без drawing
+trackOb = true
+trackFvg = true
+trackSweep = true
+fibLogicOn = true
+maxHistKeep = math.min(maxHistTrades, cleanChart ? 2 : maxHistTrades)
 
 // ── helpers ─────────────────────────────────────────────────────────────
 word(v) => v > 0 ? "вверх" : v < 0 ? "вниз" : "бок"
@@ -137,6 +154,14 @@ clampBar(b) =>
     int lim = bar_index - 490
     na(b) ? lim : int(math.max(b, lim))
 
+trimZonePair(tops, bots, types, boxes, maxN) =>
+    while array.size(types) > maxN
+        array.shift(tops)
+        array.shift(bots)
+        array.shift(types)
+        if array.size(boxes) > 0
+            box.delete(array.shift(boxes))
+
 hiBetween(fromBar, toBar) =>
     int left = math.min(fromBar, toBar)
     int right = math.max(fromBar, toBar)
@@ -170,12 +195,12 @@ trendFilter = modeScalp ? trend15 : trend4h
 htfLong = not needHtf or trendFilter == 1
 htfShort = not needHtf or trendFilter == -1
 
-plot(emaF, "EMA20", color = #F0B90B)
-plot(emaS, "EMA50", color = #848E9C)
-bgcolor(trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
+plot(cleanChart ? na : emaF, "EMA20", color = #F0B90B)
+plot(cleanChart ? na : emaS, "EMA50", color = #848E9C)
+bgcolor(cleanChart ? na : trend4h == 1 ? color.new(#0ECB81, 95) : trend4h == -1 ? color.new(#F6465D, 95) : na)
 
 var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
-if barstate.islast
+if barstate.islast and not cleanChart
     table.cell(dash, 0, 0, "График", text_color = #848E9C, text_size = size.small)
     table.cell(dash, 1, 0, word(trendChart), text_color = col(trendChart), text_size = size.small)
     table.cell(dash, 0, 1, "4h", text_color = #848E9C, text_size = size.small)
@@ -201,10 +226,14 @@ var line lvlLow = na
 var label lblHigh = na
 var label lblLow = na
 var array<label> eventLabels = array.new<label>()
-var array<box> obBoxes = array.new<box>()
+var array<float> obTops = array.new<float>()
+var array<float> obBots = array.new<float>()
 var array<int> obTypes = array.new<int>()
-var array<box> fvgBoxes = array.new<box>()
+var array<box> obBoxes = array.new<box>()
+var array<float> fvgTops = array.new<float>()
+var array<float> fvgBots = array.new<float>()
 var array<int> fvgTypes = array.new<int>()
+var array<box> fvgBoxes = array.new<box>()
 var array<label> entryLabels = array.new<label>()
 var array<line> entryLines = array.new<line>()
 
@@ -223,7 +252,7 @@ if not na(sh1) and not na(sh2) and not na(sl1) and not na(sl2)
     if sh1 < sh2 and sl1 < sl2
         structure := -1
 
-if showLevels and barstate.islast
+if paintLevels and barstate.islast
     if not na(lvlHigh)
         line.delete(lvlHigh)
     if not na(lvlLow)
@@ -239,7 +268,7 @@ if showLevels and barstate.islast
         lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
         lblLow := label.new(bar_index + 3, sl1, "уровень L\n" + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
 
-if barstate.islast
+if barstate.islast and not cleanChart
     table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
     table.cell(dash, 1, 3, not na(sh1) and not na(sl1) ? str.tostring(sh1, format.mintick) + " / " + str.tostring(sl1, format.mintick) : "—", text_color = #EAECEF, text_size = size.tiny)
 
@@ -276,103 +305,132 @@ isBosUp = bosUp and not isChoChUp
 isBosDn = bosDn and not isChoChDn
 
 // карта всегда: CHoCH / BOS / снятие (алго-сделка рисуется отдельно)
-if showBos and isBosUp
+if paintBos and isBosUp
     array.push(eventLabels, label.new(bar_index, low, "ПРОБОЙ BOS ↑", style = label.style_label_up, color = color.new(#26A69A, 10), textcolor = color.white, size = size.small))
     trimLabels(eventLabels, 10)
-if showBos and isBosDn
+if paintBos and isBosDn
     array.push(eventLabels, label.new(bar_index, high, "ПРОБОЙ BOS ↓", style = label.style_label_down, color = color.new(#26A69A, 10), textcolor = color.white, size = size.small))
     trimLabels(eventLabels, 10)
-if showBos and isChoChUp
+if paintBos and isChoChUp
     array.push(eventLabels, label.new(bar_index, low, "СМЕНА CHoCH ↑\nбыл медвежий", style = label.style_label_up, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.small))
     trimLabels(eventLabels, 10)
-if showBos and isChoChDn
+if paintBos and isChoChDn
     array.push(eventLabels, label.new(bar_index, high, "СМЕНА CHoCH ↓\nбыл бычий", style = label.style_label_down, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.small))
     trimLabels(eventLabels, 10)
 
-if showOb and (isBosUp or isChoChUp)
+if trackOb and (isBosUp or isChoChUp)
     [obi, obh, obl] = findBullOb()
     if not na(obi)
-        array.push(obBoxes, box.new(obi, obh, bar_index + 8, obl, border_color = color.new(#7C4DFF, 20), bgcolor = color.new(#7C4DFF, 78), border_width = 1, text = "OB спрос", text_color = #B388FF, text_size = size.tiny))
+        array.push(obTops, obh)
+        array.push(obBots, obl)
         array.push(obTypes, 1)
-        trimBoxesTyped(obBoxes, obTypes, obMax)
-if showOb and (isBosDn or isChoChDn)
+        if paintOb
+            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#7C4DFF, 20), bgcolor = color.new(#7C4DFF, 78), border_width = 1, text = "OB", text_color = #B388FF, text_size = size.tiny))
+        trimZonePair(obTops, obBots, obTypes, obBoxes, paintOb ? math.min(obMax, 2) : 2)
+if trackOb and (isBosDn or isChoChDn)
     [obi, obh, obl] = findBearOb()
     if not na(obi)
-        array.push(obBoxes, box.new(obi, obh, bar_index + 8, obl, border_color = color.new(#D500F9, 15), bgcolor = color.new(#AA00FF, 75), border_width = 1, text = "OB предложение", text_color = #E040FB, text_size = size.tiny))
+        array.push(obTops, obh)
+        array.push(obBots, obl)
         array.push(obTypes, -1)
-        trimBoxesTyped(obBoxes, obTypes, obMax)
+        if paintOb
+            array.push(obBoxes, box.new(clampBar(obi), obh, bar_index + 8, obl, border_color = color.new(#D500F9, 15), bgcolor = color.new(#AA00FF, 75), border_width = 1, text = "OB", text_color = #E040FB, text_size = size.tiny))
+        trimZonePair(obTops, obBots, obTypes, obBoxes, paintOb ? math.min(obMax, 2) : 2)
 
-if showOb and array.size(obBoxes) > 0
-    for i = array.size(obBoxes) - 1 to 0
-        bx = array.get(obBoxes, i)
-        tp = array.get(obTypes, i)
-        // тянем зону вправо; снимаем только при закрытии сквозь зону
-        box.set_right(bx, bar_index + 2)
-        if tp == 1 and close < box.get_bottom(bx)
-            box.delete(bx)
-            array.remove(obBoxes, i)
+if trackOb and array.size(obTypes) > 0
+    for i = array.size(obTypes) - 1 to 0
+        float oTop = array.get(obTops, i)
+        float oBot = array.get(obBots, i)
+        int oTp = array.get(obTypes, i)
+        if paintOb and i < array.size(obBoxes)
+            box.set_right(array.get(obBoxes, i), bar_index + 2)
+        if oTp == 1 and close < oBot
+            if paintOb and i < array.size(obBoxes)
+                box.delete(array.get(obBoxes, i))
+                array.remove(obBoxes, i)
+            array.remove(obTops, i)
+            array.remove(obBots, i)
             array.remove(obTypes, i)
-        else if tp == -1 and close > box.get_top(bx)
-            box.delete(bx)
-            array.remove(obBoxes, i)
+        else if oTp == -1 and close > oTop
+            if paintOb and i < array.size(obBoxes)
+                box.delete(array.get(obBoxes, i))
+                array.remove(obBoxes, i)
+            array.remove(obTops, i)
+            array.remove(obBots, i)
             array.remove(obTypes, i)
 
 inBullOb = false
 inBearOb = false
-if array.size(obBoxes) > 0
-    for i = 0 to array.size(obBoxes) - 1
-        bx = array.get(obBoxes, i)
-        tp = array.get(obTypes, i)
-        if low <= box.get_top(bx) and high >= box.get_bottom(bx)
-            if tp == 1
+if array.size(obTypes) > 0
+    for i = 0 to array.size(obTypes) - 1
+        float oTop = array.get(obTops, i)
+        float oBot = array.get(obBots, i)
+        int oTp = array.get(obTypes, i)
+        if low <= oTop and high >= oBot
+            if oTp == 1
                 inBullOb := true
-            if tp == -1
+            if oTp == -1
                 inBearOb := true
 
-sweepUp = ok and showSweep and not na(sh1) and high > sh1 and close < sh1 and close < open
-sweepDn = ok and showSweep and not na(sl1) and low < sl1 and close > sl1 and close > open
-if sweepUp
+sweepUp = ok and trackSweep and not na(sh1) and high > sh1 and close < sh1 and close < open
+sweepDn = ok and trackSweep and not na(sl1) and low < sl1 and close > sl1 and close > open
+if paintSweep and sweepUp
     array.push(eventLabels, label.new(bar_index, high, "СНЯТИЕ ↑\nликвидность над " + str.tostring(sh1, format.mintick), style = label.style_label_down, color = color.new(#FF6D00, 10), textcolor = color.white, size = size.small))
     trimLabels(eventLabels, 10)
-if sweepDn
+if paintSweep and sweepDn
     array.push(eventLabels, label.new(bar_index, low, "СНЯТИЕ ↓\nликвидность под " + str.tostring(sl1, format.mintick), style = label.style_label_up, color = color.new(#FF6D00, 10), textcolor = color.white, size = size.small))
     trimLabels(eventLabels, 10)
 
-bullGap = ok and showFvg and low > high[2] and (low - high[2]) >= fvgMinAtr * atrV
-bearGap = ok and showFvg and high < low[2] and (low[2] - high) >= fvgMinAtr * atrV
+bullGap = ok and trackFvg and low > high[2] and (low - high[2]) >= fvgMinAtr * atrV
+bearGap = ok and trackFvg and high < low[2] and (low[2] - high) >= fvgMinAtr * atrV
 if bullGap
-    array.push(fvgBoxes, box.new(bar_index - 2, low, bar_index + 25, high[2], border_color = color.new(#00BCD4, 30), bgcolor = color.new(#00BCD4, 82), border_width = 1, text = "FVG ↑", text_color = #00E5FF, text_size = size.tiny))
+    array.push(fvgTops, low)
+    array.push(fvgBots, high[2])
     array.push(fvgTypes, 1)
-    trimBoxesTyped(fvgBoxes, fvgTypes, fvgMax)
+    if paintFvg
+        array.push(fvgBoxes, box.new(bar_index - 2, low, bar_index + 25, high[2], border_color = color.new(#00BCD4, 30), bgcolor = color.new(#00BCD4, 82), border_width = 1, text = "FVG↑", text_color = #00E5FF, text_size = size.tiny))
+    trimZonePair(fvgTops, fvgBots, fvgTypes, fvgBoxes, paintFvg ? math.min(fvgMax, 2) : 2)
 if bearGap
-    array.push(fvgBoxes, box.new(bar_index - 2, low[2], bar_index + 25, high, border_color = color.new(#FF4081, 30), bgcolor = color.new(#FF4081, 82), border_width = 1, text = "FVG ↓", text_color = #FF80AB, text_size = size.tiny))
+    array.push(fvgTops, low[2])
+    array.push(fvgBots, high)
     array.push(fvgTypes, -1)
-    trimBoxesTyped(fvgBoxes, fvgTypes, fvgMax)
+    if paintFvg
+        array.push(fvgBoxes, box.new(bar_index - 2, low[2], bar_index + 25, high, border_color = color.new(#FF4081, 30), bgcolor = color.new(#FF4081, 82), border_width = 1, text = "FVG↓", text_color = #FF80AB, text_size = size.tiny))
+    trimZonePair(fvgTops, fvgBots, fvgTypes, fvgBoxes, paintFvg ? math.min(fvgMax, 2) : 2)
 
-if showFvg and array.size(fvgBoxes) > 0
-    for i = array.size(fvgBoxes) - 1 to 0
-        bx = array.get(fvgBoxes, i)
-        tp = array.get(fvgTypes, i)
-        box.set_right(bx, bar_index + 2)
-        if tp == 1 and low <= box.get_bottom(bx)
-            box.delete(bx)
-            array.remove(fvgBoxes, i)
+if trackFvg and array.size(fvgTypes) > 0
+    for i = array.size(fvgTypes) - 1 to 0
+        float fTop = array.get(fvgTops, i)
+        float fBot = array.get(fvgBots, i)
+        int fTp = array.get(fvgTypes, i)
+        if paintFvg and i < array.size(fvgBoxes)
+            box.set_right(array.get(fvgBoxes, i), bar_index + 2)
+        if fTp == 1 and low <= fBot
+            if paintFvg and i < array.size(fvgBoxes)
+                box.delete(array.get(fvgBoxes, i))
+                array.remove(fvgBoxes, i)
+            array.remove(fvgTops, i)
+            array.remove(fvgBots, i)
             array.remove(fvgTypes, i)
-        else if tp == -1 and high >= box.get_top(bx)
-            box.delete(bx)
-            array.remove(fvgBoxes, i)
+        else if fTp == -1 and high >= fTop
+            if paintFvg and i < array.size(fvgBoxes)
+                box.delete(array.get(fvgBoxes, i))
+                array.remove(fvgBoxes, i)
+            array.remove(fvgTops, i)
+            array.remove(fvgBots, i)
             array.remove(fvgTypes, i)
 
 inBullFvg = false
 inBearFvg = false
-if array.size(fvgBoxes) > 0
-    for i = 0 to array.size(fvgBoxes) - 1
-        bx = array.get(fvgBoxes, i)
-        tp = array.get(fvgTypes, i)
-        if low <= box.get_top(bx) and high >= box.get_bottom(bx)
-            if tp == 1
+if array.size(fvgTypes) > 0
+    for i = 0 to array.size(fvgTypes) - 1
+        float fTop = array.get(fvgTops, i)
+        float fBot = array.get(fvgBots, i)
+        int fTp = array.get(fvgTypes, i)
+        if low <= fTop and high >= fBot
+            if fTp == 1
                 inBullFvg := true
-            if tp == -1
+            if fTp == -1
                 inBearFvg := true
 
 sqHigh = ta.highest(high, sqBars)
@@ -381,7 +439,7 @@ inSqueeze = (sqHigh - sqLow) <= sqAtr * atrV and (sqHigh - sqLow) > 0
 sqBreakUp = ok and showSqueeze and inSqueeze[1] and close > sqHigh[1] and close[1] <= sqHigh[1]
 sqBreakDn = ok and showSqueeze and inSqueeze[1] and close < sqLow[1] and close[1] >= sqLow[1]
 var box sqBox = na
-if showSqueeze
+if paintFig and showSqueeze
     if inSqueeze
         if na(sqBox)
             sqBox := box.new(bar_index - sqBars + 1, sqHigh, bar_index, sqLow, border_color = color.new(#F0B90B, 25), bgcolor = color.new(#F0B90B, 92), border_style = line.style_dashed, text = "сжатие · ждём пробой", text_color = #F0B90B, text_size = size.tiny)
@@ -432,7 +490,7 @@ if not na(ph)
         neckH := loBetween(p1Hb, p2Hb)
         extH := math.max(p1H, p2H)
 
-if showDouble and barstate.islast
+if paintFig and showDouble and barstate.islast
     if not na(neckLineL)
         line.delete(neckLineL)
     if not na(neckLineH)
@@ -593,7 +651,7 @@ if not na(neckH) and not na(extH) and (close > extH or bar_index - p2Hb > 80)
     neckH := na
     extH := na
 
-if showHs and barstate.islast
+if paintFig and showHs and barstate.islast
     if not na(hsNeckLn)
         line.delete(hsNeckLn)
     if not na(hsLsLn)
@@ -659,7 +717,7 @@ longSetup = showEntries and ok and htfLong and volOk and (figLongOk or smcLongOk
 shortSetup = showEntries and ok and htfShort and volOk and (figShortOk or smcShortOk)
 
 waiting = not na(pendLongBar) ? "ретест после " + pendLongWhy : not na(pendShortBar) ? "ретест после " + pendShortWhy : inSqueeze ? "пробой сжатия" : waitHsUp ? "пробой перев. Г-П" : waitHsDn ? "пробой головы-плеч" : waitDblUp ? "пробой двойного дна" : waitDblDn ? "пробой двойной вершины" : inBullOb or inBearOb ? "возврат в OB" : inBullFvg or inBearFvg ? "работа с FVG" : "—"
-if barstate.islast
+if barstate.islast and not cleanChart
     table.cell(dash, 1, 4, waiting, text_color = #F0B90B, text_size = size.tiny)
 
 var int lastLong = na
@@ -780,7 +838,7 @@ if ok and skSide > 0 and not na(skA) and close < skA
 
 // импульс готов только когда A и B подтверждены и размах достаточный
 skRange = not na(skA) and not na(skB) ? math.abs(skA - skB) : na
-skReady = showFib and not na(skRange) and skRange >= fibMinAtr * atrV and not na(skBBar) and bar_index > skBBar
+skReady = fibLogicOn and not na(skRange) and skRange >= fibMinAtr * atrV and not na(skBBar) and bar_index > skBBar
 skDown = skReady and skSide < 0 and skB < skA   // A=high, B=low
 skUp = skReady and skSide > 0 and skB > skA     // A=low, B=high
 
@@ -889,7 +947,7 @@ if barstate.islast
     if not na(fibZoneBox)
         box.delete(fibZoneBox)
         fibZoneBox := na
-    if showFib and skDown
+    if paintFib and skDown
         int x0 = clampBar(skABar)
         int x1 = bar_index + 4
         array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
@@ -906,7 +964,7 @@ if barstate.islast
         array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
         fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ШОРТ", text_color = #A78BFA, text_size = size.tiny)
         fibState := close < skZoneBot ? "ждём откат ↑ в 0.5–0.618" : inSkShortZone ? "в зоне · ждём медв. свечу" : "выше 0.618 · стоп-зона"
-    else if showFib and skUp
+    else if paintFib and skUp
         int x0 = clampBar(skABar)
         int x1 = bar_index + 4
         array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
@@ -923,9 +981,10 @@ if barstate.islast
         array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
         fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ЛОНГ", text_color = #A78BFA, text_size = size.tiny)
         fibState := close > skZoneTop ? "ждём откат ↓ в 0.5–0.618" : inSkLongZone ? "в зоне · ждём быч. свечу" : "ниже 0.618 · стоп-зона"
-    else if showFib
+    else if fibLogicOn
         fibState := not na(skA) and na(skB) ? (skSide < 0 ? "ждём low импульса ↓" : "ждём high импульса ↑") : "импульса нет"
-    table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
+    if not cleanChart
+        table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
 
 // ── доп. стратегии: Z146 / Sweep-ретест / EMA / FVG fill / Asian ────────
 // Z146 ZigZag уровни + вход при касании и развороте
@@ -961,16 +1020,20 @@ if useZ146
                 zLvl := zL
                 zLvlSide := zDir
                 zLvlBar := bar_index
-                if not na(zLvlLn)
-                    line.delete(zLvlLn)
-                zLvlLn := line.new(bar_index, zL, bar_index + 20, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 2)
+                if paintMap
+                    if not na(zLvlLn)
+                        line.delete(zLvlLn)
+                    zLvlLn := line.new(bar_index, zL, bar_index + 20, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 2)
         zLastP := zExt
         zLastPi := zExtI
         zDir := -zDir
         zExt := zDir > 0 ? high : low
         zExtI := bar_index
-    if not na(zLvlLn)
+    if paintMap and not na(zLvlLn)
         line.set_x2(zLvlLn, bar_index + 2)
+    else if not paintMap and not na(zLvlLn)
+        line.delete(zLvlLn)
+        zLvlLn := na
 
 z146Long = useZ146 and ok and not na(zLvl) and zLvlSide > 0 and low <= zLvl and close > zLvl and close > open and (not needHtf or htfLong) and (not needVol or volOk)
 z146Short = useZ146 and ok and not na(zLvl) and zLvlSide < 0 and high >= zLvl and close < zLvl and close < open and (not needHtf or htfShort) and (not needVol or volOk)
@@ -1195,7 +1258,7 @@ if algoStyle and planEnter
     float p2 = planTp2Keep
     float p3 = planTp3Keep
 
-    while array.size(tOpen) >= maxHistTrades
+    while array.size(tOpen) >= maxHistKeep
         label.delete(array.shift(histLbl))
         array.shift(tSide)
         array.shift(tEntry)
@@ -1234,9 +1297,9 @@ if algoStyle and planEnter
 
     int xR = bar_index + useHorizon
     if planSide > 0
-        actBuySell := label.new(bar_index, low, modeScalp ? "BUY SCALP" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.large)
+        actBuySell := label.new(bar_index, low, modeScalp ? "BUY SCALP" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.normal)
     else
-        actBuySell := label.new(bar_index, high, modeScalp ? "SELL SCALP" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.large)
+        actBuySell := label.new(bar_index, high, modeScalp ? "SELL SCALP" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.normal)
     if planSide > 0
         actSl := box.new(bar_index, planEntry, xR, planStop, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
         actTpZone := box.new(bar_index, p3, xR, planEntry, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
@@ -1383,45 +1446,39 @@ if algoStyle and array.size(tOpen) > 0
     else if not na(actIdx) and actIdx < array.size(tOpen) and not array.get(tOpen, actIdx)
         algoBusy := false
         // скальп: сразу убрать коробки после TP/SL — не оставлять BUY·SL на экране
-        if modeScalp
-            if not na(actSl)
-                box.delete(actSl)
-            if not na(actTpZone)
-                box.delete(actTpZone)
-            if not na(actEntry)
-                line.delete(actEntry)
-            if not na(actTp1)
-                line.delete(actTp1)
-            if not na(actTp2)
-                line.delete(actTp2)
-            if not na(actTp3)
-                line.delete(actTp3)
-            if not na(actTp1L)
-                label.delete(actTp1L)
-            if not na(actTp2L)
-                label.delete(actTp2L)
-            if not na(actTp3L)
-                label.delete(actTp3L)
-            if not na(actSlL)
-                label.delete(actSlL)
-            if not na(actBuySell)
-                label.delete(actBuySell)
-            actSl := na
-            actTpZone := na
-            actEntry := na
-            actTp1 := na
-            actTp2 := na
-            actTp3 := na
-            actTp1L := na
-            actTp2L := na
-            actTp3L := na
-            actSlL := na
-            actBuySell := na
-        else
-            if not na(actSl)
-                box.set_right(actSl, bar_index)
-            if not na(actTpZone)
-                box.set_right(actTpZone, bar_index)
+        if not na(actSl)
+            box.delete(actSl)
+        if not na(actTpZone)
+            box.delete(actTpZone)
+        if not na(actEntry)
+            line.delete(actEntry)
+        if not na(actTp1)
+            line.delete(actTp1)
+        if not na(actTp2)
+            line.delete(actTp2)
+        if not na(actTp3)
+            line.delete(actTp3)
+        if not na(actTp1L)
+            label.delete(actTp1L)
+        if not na(actTp2L)
+            label.delete(actTp2L)
+        if not na(actTp3L)
+            label.delete(actTp3L)
+        if not na(actSlL)
+            label.delete(actSlL)
+        if not na(actBuySell)
+            label.delete(actBuySell)
+        actSl := na
+        actTpZone := na
+        actEntry := na
+        actTp1 := na
+        actTp2 := na
+        actTp3 := na
+        actTp1L := na
+        actTp2L := na
+        actTp3L := na
+        actSlL := na
+        actBuySell := na
     else
         algoBusy := false
 
@@ -1515,7 +1572,7 @@ if barstate.islast and showPlan
         float liveStop = na
         float liveTp = na
         float liveTp2 = na
-        if showFib and skDown
+        if paintFib and skDown
             liveSide := -1
             liveName := "SK Fib шорт"
             liveEntry := skZ1
@@ -1523,7 +1580,7 @@ if barstate.islast and showPlan
             liveTp := fibShortTp1
             liveTp2 := fibShortTp2
             liveWhy := fibState
-        else if showFib and skUp
+        else if paintFib and skUp
             liveSide := 1
             liveName := "SK Fib лонг"
             liveEntry := skZ1
