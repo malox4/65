@@ -1,0 +1,95 @@
+//@version=6
+// Урок 17.02.2023 · Ликвидность + пробой/ретест / свип
+// Ликвидность = стопы, тейки, ордера на пробой и на отбой за хаями/лоями.
+// Сетапы: 1) пробой → ретест  2) свип (тень за уровень, close обратно).
+indicator("Урок · Ликвидность", overlay = true, max_lines_count = 20, max_labels_count = 60)
+
+grp = "Урок"
+swingLen    = input.int(5, "Swing (крыло)", minval = 2, maxval = 20, group = grp)
+retestBars  = input.int(12, "Окно ретеста после пробоя", minval = 3, maxval = 40, group = grp)
+showLevels  = input.bool(true, "Линии ликвидности H/L", group = grp)
+showBreak   = input.bool(true, "Метка ПРОБОЙ", group = grp)
+showRetest  = input.bool(true, "▲▼ ретест", group = grp)
+showSweep   = input.bool(true, "Метка СВИП", group = grp)
+showHelp    = input.bool(true, "Таблица", group = grp)
+colH = input.color(#F6465D, "Ликвидность сверху", group = grp)
+colL = input.color(#0ECB81, "Ликвидность снизу", group = grp)
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lvlH = na
+var float lvlL = na
+var int   bornH = na
+var int   bornL = na
+var bool  brokeUp = false
+var bool  brokeDn = false
+var int   breakBarUp = na
+var int   breakBarDn = na
+
+if not na(ph)
+    lvlH := ph
+    bornH := bar_index - swingLen
+    brokeUp := false
+    breakBarUp := na
+if not na(pl)
+    lvlL := pl
+    bornL := bar_index - swingLen
+    brokeDn := false
+    breakBarDn := na
+
+// пробой: закрытие за уровнем
+crossUp = not na(lvlH) and not brokeUp and close > lvlH and close[1] <= lvlH
+crossDn = not na(lvlL) and not brokeDn and close < lvlL and close[1] >= lvlL
+if crossUp
+    brokeUp := true
+    breakBarUp := bar_index
+if crossDn
+    brokeDn := true
+    breakBarDn := bar_index
+
+// ретест в окне после пробоя
+inWinUp = brokeUp and not na(breakBarUp) and (bar_index - breakBarUp) <= retestBars and (bar_index - breakBarUp) >= 1
+inWinDn = brokeDn and not na(breakBarDn) and (bar_index - breakBarDn) <= retestBars and (bar_index - breakBarDn) >= 1
+retestLong  = inWinUp and low <= lvlH and close > lvlH
+retestShort = inWinDn and high >= lvlL and close < lvlL
+
+// свип: тень за уровень, закрытие обратно
+sweepHigh = not na(lvlH) and high > lvlH and close < lvlH and high[1] <= lvlH
+sweepLow  = not na(lvlL) and low < lvlL and close > lvlL and low[1] >= lvlL
+
+var line lineH = na
+var line lineL = na
+if showLevels and barstate.islast
+    line.delete(lineH)
+    line.delete(lineL)
+    if not na(lvlH)
+        lineH := line.new(bornH, lvlH, bar_index + 2, lvlH, color = colH, style = line.style_dashed, width = 1)
+    if not na(lvlL)
+        lineL := line.new(bornL, lvlL, bar_index + 2, lvlL, color = colL, style = line.style_dashed, width = 1)
+
+plotshape(showBreak and crossUp, title = "Пробой ↑", style = shape.diamond, location = location.abovebar, color = colL, size = size.tiny, text = "ПРОБОЙ", textcolor = colL)
+plotshape(showBreak and crossDn, title = "Пробой ↓", style = shape.diamond, location = location.belowbar, color = colH, size = size.tiny, text = "ПРОБОЙ", textcolor = colH)
+plotshape(showRetest and retestLong, title = "Ретест лонг", style = shape.triangleup, location = location.belowbar, color = colL, size = size.normal, text = "ЛОНГ", textcolor = colL)
+plotshape(showRetest and retestShort, title = "Ретест шорт", style = shape.triangledown, location = location.abovebar, color = colH, size = size.normal, text = "ШОРТ", textcolor = colH)
+plotshape(showSweep and sweepHigh, title = "Свип хая", style = shape.xcross, location = location.abovebar, color = colH, size = size.small, text = "СВИП", textcolor = colH)
+plotshape(showSweep and sweepLow, title = "Свип лоя", style = shape.xcross, location = location.belowbar, color = colL, size = size.small, text = "СВИП", textcolor = colL)
+
+if retestLong
+    label.new(bar_index, low, "ретест бывшего сопротивления\nстоп под уровнем", style = label.style_label_up, color = color.new(colL, 20), textcolor = color.white, size = size.small)
+if retestShort
+    label.new(bar_index, high, "ретест бывшей поддержки\nстоп над уровнем", style = label.style_label_down, color = color.new(colH, 20), textcolor = color.white, size = size.small)
+
+var table t = table.new(position.top_right, 1, 6, bgcolor = color.new(#0B0E11, 12), border_width = 1, border_color = #2B3139)
+if showHelp and barstate.islast
+    table.cell(t, 0, 0, "УРОК · ЛИКВИДНОСТЬ (17.02)", text_color = #F0B90B, text_size = size.normal)
+    table.cell(t, 0, 1, "За H/L: стопы · тейки · пробой · отбой", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "ПРОБОЙ → ретест уровня = ▲ЛОНГ / ▼ШОРТ", text_color = #0ECB81, text_size = size.small)
+    table.cell(t, 0, 3, "СВИП = тень за уровень, close обратно", text_color = #F6465D, text_size = size.small)
+    table.cell(t, 0, 4, "H " + (na(lvlH) ? "—" : str.tostring(lvlH, format.mintick)) + " · L " + (na(lvlL) ? "—" : str.tostring(lvlL, format.mintick)), text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 5, "ДЗ: 3 актива × 3 ТФ — разметить ликвидность", text_color = #848E9C, text_size = size.tiny)
+
+alertcondition(retestLong, "Ретест лонг", "Пробой вверх + ретест")
+alertcondition(retestShort, "Ретест шорт", "Пробой вниз + ретест")
+alertcondition(sweepHigh, "Свип хая", "Ликвидность сверху снята")
+alertcondition(sweepLow, "Свип лоя", "Ликвидность снизу снята")
