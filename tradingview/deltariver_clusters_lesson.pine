@@ -26,9 +26,10 @@ markZone   = input.bool(true, "Бокс зоны на сигнале", group = g
 zoneBars   = input.int(12, "Ширина бокса (свечей вправо)", minval = 2, maxval = 40, group = grpSig)
 
 grpVis = "Вид"
-showPoc    = input.bool(true, "POC бара (макс объём LTF)", group = grpVis)
-showCvd    = input.bool(true, "CVD day (линия)", group = grpVis)
-showTable  = input.bool(true, "Таблица", group = grpVis)
+showPoc    = input.bool(false, "POC бара (точки на цене)", group = grpVis, tooltip = "Выкл. по умолчанию — не путать со свечами.")
+showFilterMarks = input.bool(true, "Квадраты фильтра (тени)", group = grpVis)
+showSigMarks = input.bool(true, "Треугольники ЛОНГ/ШОРТ на свечах", group = grpVis)
+showTable  = input.bool(true, "Таблица (тут же CVD числом)", group = grpVis)
 colBuy     = input.color(#0ECB81, "Buy delta / верх", group = grpVis)
 colSell    = input.color(#F6465D, "Sell delta / низ", group = grpVis)
 colPoc     = input.color(#F0B90B, "POC", group = grpVis)
@@ -133,15 +134,15 @@ longSig = sellInLowerWick and (not useSweep or sweepLow or low <= swingLo) and v
 // Шорт-идея: buy climax / absorption в верхней тени на медвежьей + sweep верха
 shortSig = buyInUpperWick and (not useSweep or sweepHigh or high >= swingHi) and volOk and cciShortOk
 
-plotshape(buyInUpperWick, title = "BuyΔ верхняя тень", style = shape.square, location = location.abovebar, color = colBuy, size = size.tiny)
-plotshape(sellInLowerWick, title = "SellΔ нижняя тень", style = shape.square, location = location.belowbar, color = colSell, size = size.tiny)
-plotshape(longSig, title = "Сигнал лонг", style = shape.triangleup, location = location.belowbar, color = colBuy, size = size.small)
-plotshape(shortSig, title = "Сигнал шорт", style = shape.triangledown, location = location.abovebar, color = colSell, size = size.small)
+// ВАЖНО: всё рисуется НА СВЕЧАХ (overlay). Фиолетовую CVD-линию убрали — путала с ценой.
+plotshape(showFilterMarks and buyInUpperWick, title = "BuyΔ верхняя тень", style = shape.square, location = location.abovebar, color = colBuy, size = size.tiny, force_overlay = true)
+plotshape(showFilterMarks and sellInLowerWick, title = "SellΔ нижняя тень", style = shape.square, location = location.belowbar, color = colSell, size = size.tiny, force_overlay = true)
+plotshape(showSigMarks and longSig, title = "Сигнал лонг", style = shape.triangleup, location = location.belowbar, color = colBuy, size = size.small, text = "ЛОНГ", textcolor = colBuy, force_overlay = true)
+plotshape(showSigMarks and shortSig, title = "Сигнал шорт", style = shape.triangledown, location = location.abovebar, color = colSell, size = size.small, text = "ШОРТ", textcolor = colSell, force_overlay = true)
 
-plot(showPoc ? pocPrice : na, "POC бара", color = colPoc, style = plot.style_circles, linewidth = 2)
-plot(showCvd ? cvd : na, "CVD Day", color = color.new(#9B59B6, 0), display = display.pane, linewidth = 2)
+plot(showPoc ? pocPrice : na, "POC бара", color = colPoc, style = plot.style_circles, linewidth = 2, force_overlay = true)
 
-bgcolor(longSig ? color.new(colBuy, 90) : shortSig ? color.new(colSell, 90) : na)
+bgcolor(longSig ? color.new(colBuy, 92) : shortSig ? color.new(colSell, 92) : na, force_overlay = true)
 
 // зоны интереса на сигнале (как жёлтый бокс у экстремума)
 var box[] zones = array.new_box()
