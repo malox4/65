@@ -1,0 +1,574 @@
+//@version=6
+// 65 Signal Mix — микс уроков + старых скриптов.
+// На графике ТОЛЬКО: сигнал · почему · рисунок причины · вход/стоп/тейк с ценой.
+// Остальные модули считают в фоне и голосуют (конфлюенс).
+indicator("65 Signal Mix", overlay = true, max_labels_count = 40, max_lines_count = 40, max_boxes_count = 8)
+
+grp = "Сигнал"
+minVotes   = input.int(2, "Мин. совпадений (точность)", minval = 1, maxval = 6, group = grp, tooltip = "Сколько модулей должны сказать в одну сторону. 2–3 = точнее, меньше спама.")
+tpR        = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
+slPad      = input.float(0.12, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
+freshBars  = input.int(6, "Держать сигнал N свечей", minval = 2, maxval = 20, group = grp)
+cooldown   = input.int(8, "Пауза между сигналами", minval = 3, maxval = 40, group = grp)
+liveAtr    = input.float(0.7, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
+needHtf    = input.bool(true, "Фильтр EMA тренда", group = grp)
+emaFast    = input.int(20, "EMA fast", group = grp)
+emaSlow    = input.int(50, "EMA slow", group = grp)
+atrLen     = input.int(14, "ATR", group = grp)
+volMult    = input.float(1.25, "Объём × SMA", minval = 1.0, step = 0.05, group = grp)
+showHist   = input.bool(true, "Мелкие метки прошлых сигналов", group = grp)
+leverage   = input.float(20.0, "Плечо (для % маржи в подписи)", minval = 1, step = 1, group = grp)
+
+grpM = "Модули (фон)"
+useSweep   = input.bool(true, "Свип (MATIC)", group = grpM)
+useBrake   = input.bool(true, "Тормозной бар", group = grpM)
+useTape    = input.bool(true, "Speed / плотность", group = grpM)
+useDr      = input.bool(true, "DR тень 65%", group = grpM)
+useTl      = input.bool(true, "Пробой трендовой", group = grpM)
+useZone    = input.bool(true, "Защита / пробой зоны", group = grpM)
+useOb      = input.bool(true, "ОБ импульс + ретест", group = grpM)
+useIb      = input.bool(true, "Слом инсайд-бара", group = grpM)
+
+colGo = #0ECB81
+colStop = #F6465D
+colTp = #3B82F6
+colWait = #2B3139
+colLate = #F6465D
+colNow = #F0B90B
+colWhy = #F0B90B
+colMiss = #848E9C
+
+atr = ta.atr(atrLen)
+volSma = ta.sma(volume, 20)
+hiVol = volume > volSma * volMult
+rng = math.max(high - low, syminfo.mintick)
+bodyPct = math.abs(close - open) / rng * 100.0
+upW = (high - math.max(open, close)) / rng * 100.0
+loW = (math.min(open, close) - low) / rng * 100.0
+emaF = ta.ema(close, emaFast)
+emaS = ta.ema(close, emaSlow)
+htfLong = not needHtf or emaF > emaS
+htfShort = not needHtf or emaF < emaS
+pad = slPad * atr
+
+pxPct(e, px) => e != 0 ? math.abs(px - e) / e * 100.0 : 0.0
+
+// ── модули: каждый даёт vote ±1, stop-кандидат, why, draw-тип ─────────
+int vLong = 0
+int vShort = 0
+string whyL = ""
+string whyS = ""
+float stopL = na
+float stopS = na
+// draw codes: 1=sweepLvl 2=brakeBar 3=tape 4=drWick 5=tl 6=zone 7=ob 8=ib
+int drawL = 0
+int drawS = 0
+float drawY1L = na
+float drawY2L = na
+float drawY1S = na
+float drawY2S = na
+
+// 1) СВИП (lesson_matic_short)
+swingLen = 8
+priorHi = ta.highest(high[1], swingLen)
+priorLo = ta.lowest(low[1], swingLen)
+sweepShort = useSweep and hiVol and high > priorHi and close < priorHi and upW >= 35.0 and close < (high + low) / 2.0
+sweepLong  = useSweep and hiVol and low < priorLo and close > priorLo and loW >= 35.0 and close > (high + low) / 2.0
+if sweepLong
+    vLong += 1
+    whyL += "• свип лоу\n"
+    stopL := na(stopL) ? low - pad : math.min(stopL, low - pad)
+    drawL := drawL == 0 ? 1 : drawL
+    drawY1L := priorLo
+    drawY2L := low
+if sweepShort
+    vShort += 1
+    whyS += "• свип хая\n"
+    stopS := na(stopS) ? high + pad : math.max(stopS, high + pad)
+    drawS := drawS == 0 ? 1 : drawS
+    drawY1S := priorHi
+    drawY2S := high
+
+// 2) ТОРМОЗ (lesson_brake_bar)
+brakeBot = useBrake and hiVol and loW >= 55.0 and close > open
+brakeTop = useBrake and hiVol and upW >= 55.0 and close < open
+if brakeBot
+    vLong += 1
+    whyL += "• тормоз снизу\n"
+    stopL := na(stopL) ? low - pad : math.min(stopL, low - pad)
+    if drawL == 0
+        drawL := 2
+        drawY1L := low
+        drawY2L := close
+if brakeTop
+    vShort += 1
+    whyS += "• тормоз сверху\n"
+    stopS := na(stopS) ? high + pad : math.max(stopS, high + pad)
+    if drawS == 0
+        drawS := 2
+        drawY1S := high
+        drawY2S := close
+
+// 3) SPEED / плотность (lesson_speed_tape)
+density = volume / rng
+densSma = ta.sma(density, 20)
+active = density > densSma * 1.5 or hiVol
+tapeLong = useTape and active and loW >= 30.0 and close > (high + low) / 2.0
+tapeShort = useTape and active and upW >= 30.0 and close < (high + low) / 2.0
+if tapeLong
+    vLong += 1
+    whyL += "• Speed/плотность ↑\n"
+    stopL := na(stopL) ? low - pad : math.min(stopL, low - pad)
+    if drawL == 0
+        drawL := 3
+        drawY1L := low
+        drawY2L := high
+if tapeShort
+    vShort += 1
+    whyS += "• Speed/плотность ↓\n"
+    stopS := na(stopS) ? high + pad : math.max(stopS, high + pad)
+    if drawS == 0
+        drawS := 3
+        drawY1S := low
+        drawY2S := high
+
+// 4) DR тень 65% (lesson_dr_setup)
+impulseBody = hiVol and bodyPct >= 90.0
+drLong = useDr and hiVol and not impulseBody and loW >= 65.0 and close > (high + low) / 2.0
+drShort = useDr and hiVol and not impulseBody and upW >= 65.0 and close < (high + low) / 2.0
+if drLong
+    vLong += 1
+    whyL += "• DR тень 65% снизу\n"
+    stopL := na(stopL) ? low - pad : math.min(stopL, low - pad)
+    if drawL == 0
+        drawL := 4
+        drawY1L := low
+        drawY2L := math.min(open, close)
+if drShort
+    vShort += 1
+    whyS += "• DR тень 65% сверху\n"
+    stopS := na(stopS) ? high + pad : math.max(stopS, high + pad)
+    if drawS == 0
+        drawS := 4
+        drawY1S := math.max(open, close)
+        drawY2S := high
+
+// 5) ТРЕНДОВАЯ (lesson_trendline_break)
+pivotLen = 5
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float h1 = na
+var float h2 = na
+var int hb1 = na
+var int hb2 = na
+var float l1 = na
+var float l2 = na
+var int lb1 = na
+var int lb2 = na
+if not na(ph)
+    h2 := h1
+    hb2 := hb1
+    h1 := ph
+    hb1 := bar_index - pivotLen
+if not na(pl)
+    l2 := l1
+    lb2 := lb1
+    l1 := pl
+    lb1 := bar_index - pivotLen
+descTl = useTl and not na(h1) and not na(h2) and not na(hb1) and not na(hb2) and h2 > h1 and hb2 < hb1 and hb1 != hb2
+ascTl  = useTl and not na(l1) and not na(l2) and not na(lb1) and not na(lb2) and l2 < l1 and lb2 < lb1 and lb1 != lb2
+tlDn = descTl ? h2 + (h1 - h2) * (bar_index - hb2) / (hb1 - hb2) : na
+tlUp = ascTl ? l2 + (l1 - l2) * (bar_index - lb2) / (lb1 - lb2) : na
+tlDnPrev = descTl ? h2 + (h1 - h2) * (bar_index - 1 - hb2) / (hb1 - hb2) : na
+tlUpPrev = ascTl ? l2 + (l1 - l2) * (bar_index - 1 - lb2) / (lb1 - lb2) : na
+tlLong = descTl and not na(tlDn) and not na(tlDnPrev) and close > tlDn and close[1] <= tlDnPrev and hiVol and close > open
+tlShort = ascTl and not na(tlUp) and not na(tlUpPrev) and close < tlUp and close[1] >= tlUpPrev and hiVol and close < open
+if tlLong
+    vLong += 1
+    whyL += "• пробой ↓трендовой\n"
+    stopL := na(stopL) ? math.min(nz(l1, low), low) - pad : math.min(stopL, math.min(nz(l1, low), low) - pad)
+    if drawL == 0
+        drawL := 5
+        drawY1L := h2
+        drawY2L := tlDn
+if tlShort
+    vShort += 1
+    whyS += "• пробой ↑трендовой\n"
+    stopS := na(stopS) ? math.max(nz(h1, high), high) + pad : math.max(stopS, math.max(nz(h1, high), high) + pad)
+    if drawS == 0
+        drawS := 5
+        drawY1S := l2
+        drawY2S := tlUp
+
+// 6) ЗОНА защита/пробой (lesson_level_defense)
+half = 0.25 * atr
+swingZ = 5
+zPh = ta.pivothigh(high, swingZ, swingZ)
+zPl = ta.pivotlow(low, swingZ, swingZ)
+var float zMid = na
+var float zTop = na
+var float zBot = na
+var int zDir = 0
+if not na(zPh)
+    if na(zMid) or math.abs(close - zPh) <= math.abs(close - nz(zMid))
+        zMid := zPh
+        zTop := zPh + half
+        zBot := zPh - half
+        zDir := 1
+if not na(zPl)
+    if na(zMid) or math.abs(close - zPl) < math.abs(close - nz(zMid))
+        zMid := zPl
+        zTop := zPl + half
+        zBot := zPl - half
+        zDir := -1
+defLong = useZone and not na(zMid) and zDir == -1 and low <= zTop and close > zMid and close > open
+defShort = useZone and not na(zMid) and zDir == 1 and high >= zBot and close < zMid and close < open
+brkLong = useZone and not na(zTop) and zDir == 1 and close > zTop and close[1] <= zTop
+brkShort = useZone and not na(zBot) and zDir == -1 and close < zBot and close[1] >= zBot
+if defLong or brkLong
+    vLong += 1
+    whyL += defLong ? "• защита зоны снизу\n" : "• пробой зоны вверх\n"
+    sCand = zBot - pad
+    stopL := na(stopL) ? sCand : math.min(stopL, sCand)
+    if drawL == 0
+        drawL := 6
+        drawY1L := zBot
+        drawY2L := zTop
+if defShort or brkShort
+    vShort += 1
+    whyS += defShort ? "• защита зоны сверху\n" : "• пробой зоны вниз\n"
+    sCand = zTop + pad
+    stopS := na(stopS) ? sCand : math.max(stopS, sCand)
+    if drawS == 0
+        drawS := 6
+        drawY1S := zBot
+        drawY2S := zTop
+
+// 7) ОБ импульс (ob_inside classic) — ретест в окне
+var float obTop = na
+var float obBot = na
+var int obDir = 0
+var int obBorn = na
+var bool obArmed = false
+bullImpulse = close > open and math.abs(close - open) >= 1.2 * atr and close > high[1]
+bearImpulse = close < open and math.abs(close - open) >= 1.2 * atr and close < low[1]
+if useOb and bullImpulse and close[1] < open[1]
+    obTop := high[1]
+    obBot := low[1]
+    obDir := 1
+    obBorn := bar_index
+    obArmed := true
+if useOb and bearImpulse and close[1] > open[1]
+    obTop := high[1]
+    obBot := low[1]
+    obDir := -1
+    obBorn := bar_index
+    obArmed := true
+obFresh = obArmed and not na(obBorn) and (bar_index - obBorn) <= 20 and not na(obTop)
+obRetLong = useOb and obFresh and obDir == 1 and low <= obTop and close >= obBot and close > open
+obRetShort = useOb and obFresh and obDir == -1 and high >= obBot and close <= obTop and close < open
+if obRetLong
+    vLong += 1
+    whyL += "• ретест ОБ↑\n"
+    stopL := na(stopL) ? obBot - pad : math.min(stopL, obBot - pad)
+    if drawL == 0
+        drawL := 7
+        drawY1L := obBot
+        drawY2L := obTop
+if obRetShort
+    vShort += 1
+    whyS += "• ретест ОБ↓\n"
+    stopS := na(stopS) ? obTop + pad : math.max(stopS, obTop + pad)
+    if drawS == 0
+        drawS := 7
+        drawY1S := obBot
+        drawY2S := obTop
+if obFresh and ((obDir == 1 and close < obBot) or (obDir == -1 and close > obTop))
+    obArmed := false
+
+// 8) Инсайд слом (ob_inside)
+motherHigh = high[2]
+motherLow = low[2]
+wasInside = high[1] < motherHigh and low[1] > motherLow
+ibUp = useIb and wasInside and close > motherHigh and close > open
+ibDn = useIb and wasInside and close < motherLow and close < open
+if ibUp
+    vLong += 1
+    whyL += "• слом инсайд ↑\n"
+    stopL := na(stopL) ? motherLow - pad : math.min(stopL, motherLow - pad)
+    if drawL == 0
+        drawL := 8
+        drawY1L := motherLow
+        drawY2L := motherHigh
+if ibDn
+    vShort += 1
+    whyS += "• слом инсайд ↓\n"
+    stopS := na(stopS) ? motherHigh + pad : math.max(stopS, motherHigh + pad)
+    if drawS == 0
+        drawS := 8
+        drawY1S := motherLow
+        drawY2S := motherHigh
+
+// ── конфлюенс ──────────────────────────────────────────────────────────
+rawLong = vLong >= minVotes and vLong > vShort and htfLong and not na(stopL) and close > stopL
+rawShort = vShort >= minVotes and vShort > vLong and htfShort and not na(stopS) and close < stopS
+
+var int lastFire = na
+canFire = na(lastFire) or (bar_index - lastFire) >= cooldown
+
+float entry = na
+float stop = na
+float take = na
+int side = 0
+string why = ""
+int drawCode = 0
+float dY1 = na
+float dY2 = na
+int votes = 0
+
+if barstate.isconfirmed and canFire and rawLong
+    entry := close
+    stop := stopL
+    risk = entry - stop
+    if risk > 0
+        take := entry + tpR * risk
+        side := 1
+        why := whyL
+        drawCode := drawL
+        dY1 := drawY1L
+        dY2 := drawY2L
+        votes := vLong
+        lastFire := bar_index
+
+if barstate.isconfirmed and canFire and rawShort and side == 0
+    entry := close
+    stop := stopS
+    risk = stop - entry
+    if risk > 0
+        take := entry - tpR * risk
+        side := -1
+        why := whyS
+        drawCode := drawS
+        dY1 := drawY1S
+        dY2 := drawY2S
+        votes := vShort
+        lastFire := bar_index
+
+var float eMem = na
+var float sMem = na
+var float tMem = na
+var int sideMem = 0
+var string whyMem = ""
+var int drawMem = 0
+var float d1Mem = na
+var float d2Mem = na
+var int votesMem = 0
+var int bornMem = na
+var int hb2Mem = na
+var float h2Mem = na
+var int lb2Mem = na
+var float l2Mem = na
+
+if side != 0
+    eMem := entry
+    sMem := stop
+    tMem := take
+    sideMem := side
+    whyMem := why
+    drawMem := drawCode
+    d1Mem := dY1
+    d2Mem := dY2
+    votesMem := votes
+    bornMem := bar_index
+    hb2Mem := hb2
+    h2Mem := h2
+    lb2Mem := lb2
+    l2Mem := l2
+
+haveSig = not na(eMem) and not na(bornMem) and (bar_index - bornMem) <= freshBars
+if haveSig
+    entry := eMem
+    stop := sMem
+    take := tMem
+    side := sideMem
+    why := whyMem
+    drawCode := drawMem
+    dY1 := d1Mem
+    dY2 := d2Mem
+    votes := votesMem
+else
+    eMem := na
+    sMem := na
+    tMem := na
+    sideMem := 0
+    whyMem := ""
+    drawMem := 0
+    d1Mem := na
+    d2Mem := na
+    votesMem := 0
+    bornMem := na
+    entry := na
+    stop := na
+    take := na
+    side := 0
+    why := ""
+    drawCode := 0
+    votes := 0
+
+nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
+late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
+status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+
+// ── история только конфлюенс-сигналов ──────────────────────────────────
+var array<int> exBi = array.new_int()
+var array<int> exSide = array.new_int()
+var array<float> exE = array.new_float()
+var array<float> exS = array.new_float()
+var array<float> exT = array.new_float()
+var array<int> exOut = array.new_int()
+var array<int> exAge = array.new_int()
+
+if barstate.isconfirmed and haveSig and not na(bornMem) and bar_index == bornMem and side != 0
+    array.push(exBi, bar_index)
+    array.push(exSide, side)
+    array.push(exE, entry)
+    array.push(exS, stop)
+    array.push(exT, take)
+    array.push(exOut, 0)
+    array.push(exAge, 0)
+    while array.size(exBi) > 8
+        array.shift(exBi)
+        array.shift(exSide)
+        array.shift(exE)
+        array.shift(exS)
+        array.shift(exT)
+        array.shift(exOut)
+        array.shift(exAge)
+
+if showHist and array.size(exBi) > 0
+    for i = 0 to array.size(exBi) - 1
+        if array.get(exOut, i) == 0 and bar_index > array.get(exBi, i)
+            age = array.get(exAge, i) + 1
+            array.set(exAge, i, age)
+            sSide = array.get(exSide, i)
+            s0 = array.get(exS, i)
+            t0 = array.get(exT, i)
+            if sSide == 1
+                if low <= s0
+                    array.set(exOut, i, -1)
+                else if high >= t0
+                    array.set(exOut, i, 1)
+            else
+                if high >= s0
+                    array.set(exOut, i, -1)
+                else if low <= t0
+                    array.set(exOut, i, 1)
+            if array.get(exOut, i) == 0 and age >= 24
+                array.set(exOut, i, 2)
+
+plotshape(showHist and haveSig and bar_index == bornMem and side == 1, title = "L", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.tiny)
+plotshape(showHist and haveSig and bar_index == bornMem and side == -1, title = "S", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.tiny)
+
+// ── рисунок ТОЛЬКО активного сигнала ───────────────────────────────────
+var label lbMain = na
+var label lbWhy = na
+var label lbE = na
+var label lbS = na
+var label lbT = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var line lnWhy = na
+var box bxWhy = na
+var array<label> histLabs = array.new_label()
+
+if barstate.islast
+    label.delete(lbMain)
+    label.delete(lbWhy)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT)
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    line.delete(lnWhy)
+    box.delete(bxWhy)
+    if array.size(histLabs) > 0
+        for k = 0 to array.size(histLabs) - 1
+            label.delete(array.get(histLabs, k))
+        array.clear(histLabs)
+
+    x2 = bar_index + 8
+    if status == "WAIT"
+        bgVotes = "фон: L" + str.tostring(vLong) + " / S" + str.tostring(vShort) + " (нужно ≥" + str.tostring(minVotes) + ")"
+        lbMain := label.new(x2, close, "ЖДИ\nсигнала нет\n\n" + bgVotes, style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
+    else if status == "LATE"
+        lbMain := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 0), textcolor = color.white, size = size.large)
+    else
+        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди цену") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди цену")
+        col = side == 1 ? colGo : colStop
+        risk = math.abs(entry - stop)
+        reward = math.abs(take - entry)
+        rr = risk > 0 ? reward / risk : 0.0
+        pct = pxPct(entry, take)
+        marg = pct * leverage
+        lbMain := label.new(x2, entry, sideTxt + "\nсовпадений: " + str.tostring(votes) + "\n+" + str.tostring(pct, "#.##") + "% · " + str.tostring(rr, "#.##") + "R · маржа~" + str.tostring(marg, "#.#") + "%", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lbWhy := label.new(nz(bornMem, bar_index), side == 1 ? stop : take, "ПОЧЕМУ:\n" + why, style = label.style_label_right, color = color.new(#1E2329, 5), textcolor = color.white, size = size.normal)
+        lnE := line.new(nz(bornMem, bar_index), entry, x2, entry, color = colGo, width = 3)
+        lnS := line.new(nz(bornMem, bar_index), stop, x2, stop, color = colStop, width = 2, style = line.style_dotted)
+        lnT := line.new(nz(bornMem, bar_index), take, x2, take, color = colTp, width = 2, style = line.style_dashed)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick) + " (−" + str.tostring(pxPct(entry, stop), "#.##") + "%)", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick) + " (+" + str.tostring(pct, "#.##") + "%)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+
+        // рисунок причины
+        b0 = nz(bornMem, bar_index)
+        if drawCode == 5 and side == 1 and not na(hb2Mem) and not na(h2Mem) and not na(dY2)
+            lnWhy := line.new(hb2Mem, h2Mem, b0, dY2, color = color.new(colTp, 10), width = 3)
+        else if drawCode == 5 and side == -1 and not na(lb2Mem) and not na(l2Mem) and not na(dY2)
+            lnWhy := line.new(lb2Mem, l2Mem, b0, dY2, color = color.new(colStop, 10), width = 3)
+        else if (drawCode == 6 or drawCode == 7 or drawCode == 8) and not na(dY1) and not na(dY2)
+            bxWhy := box.new(math.max(b0 - 8, b0 - 20), math.max(dY1, dY2), b0 + 2, math.min(dY1, dY2), bgcolor = color.new(colWhy, 85), border_color = colWhy, border_width = 2)
+        else if not na(dY1) and not na(dY2)
+            lnWhy := line.new(b0, dY1, b0, dY2, color = color.new(colWhy, 0), width = 4)
+            bxWhy := box.new(b0 - 1, math.max(dY1, dY2), b0 + 1, math.min(dY1, dY2), bgcolor = color.new(colWhy, 80), border_color = colWhy)
+
+    // последние 3 конфлюенс-итога компактно
+    if showHist and array.size(exBi) > 0
+        fromIdx = math.max(0, array.size(exBi) - 3)
+        for i = fromIdx to array.size(exBi) - 1
+            bi = array.get(exBi, i)
+            if bi != bornMem or status == "WAIT"
+                sSide = array.get(exSide, i)
+                e0 = array.get(exE, i)
+                t0 = array.get(exT, i)
+                outc = array.get(exOut, i)
+                res = outc == 1 ? "ТЕЙК✓" : outc == -1 ? "СТОП✗" : outc == 2 ? "мимо" : "…"
+                array.push(histLabs, label.new(bi, e0, (sSide == 1 ? "L " : "S ") + res + "\nтейк " + str.tostring(t0, format.mintick), style = sSide == 1 ? label.style_label_up : label.style_label_down, color = color.new(outc == 1 ? colGo : outc == -1 ? colStop : colMiss, 20), textcolor = color.white, size = size.tiny))
+
+var table t = table.new(position.top_right, 1, 3, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    big = status == "NOW" ? (side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "LATE" ? "ОПОЗДАЛ" : status == "WAIT_FILL" ? "жди цену" : "ЖДИ"
+    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
+    table.cell(t, 0, 1, haveSig ? ("голоса " + str.tostring(votes) + " · вход " + str.tostring(entry, format.mintick) + " · тейк " + str.tostring(take, format.mintick)) : ("микс уроков · нужно ≥" + str.tostring(minVotes) + " · сейчас L" + str.tostring(vLong) + "/S" + str.tostring(vShort)), text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "на графике: сигнал + почему + рисунок · остальное в фоне", text_color = #848E9C, text_size = size.tiny)
+
+fireLong = haveSig and bar_index == bornMem and side == 1
+fireShort = haveSig and bar_index == bornMem and side == -1
+goLong = status == "NOW" and side == 1 and not (status[1] == "NOW" and side[1] == 1)
+goShort = status == "NOW" and side == -1 and not (status[1] == "NOW" and side[1] == -1)
+
+if barstate.isconfirmed
+    if fireLong
+        alert("MIX ЛОНГ · " + syminfo.ticker + " · " + str.tostring(votes) + " голоса · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick) + "\n" + why, alert.freq_once_per_bar_close)
+    if fireShort
+        alert("MIX ШОРТ · " + syminfo.ticker + " · " + str.tostring(votes) + " голоса · вход " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick) + "\n" + why, alert.freq_once_per_bar_close)
+    if goLong and not fireLong
+        alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
+    if goShort and not fireShort
+        alert("ШОРТ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+alertcondition(fireLong, title = "Mix лонг", message = "65 Signal Mix ЛОНГ")
+alertcondition(fireShort, title = "Mix шорт", message = "65 Signal Mix ШОРТ")
+alertcondition(goLong, title = "Лонг сейчас", message = "ЛОНГ СЕЙЧАС")
+alertcondition(goShort, title = "Шорт сейчас", message = "ШОРТ СЕЙЧАС")
