@@ -1,18 +1,18 @@
 //@version=6
 // Урок 15.02.2023 · Тормозной бар
-// Не спамим всю историю. На графике: либо ЖДИ, либо 1 план (вход/стоп/тейк).
-// Свечи должны быть видны (глазик у тикера 1000PEPE…).
+// История: метки «пример» на старых тормозах. План вход/стоп/тейк — только у свежего.
 indicator("Урок · Тормозной бар", overlay = true, max_lines_count = 10, max_labels_count = 10)
 
 grp = "План"
-volMult   = input.float(1.8, "Объём × SMA", minval = 1.0, step = 0.1, group = grp)
-wickPct   = input.float(45.0, "Тень % (тормоз)", minval = 25, maxval = 80, group = grp)
-bodyMax   = input.float(50.0, "Макс. тело %", minval = 20, maxval = 70, group = grp)
+volMult   = input.float(1.5, "Объём × SMA", minval = 1.0, step = 0.1, group = grp)
+wickPct   = input.float(40.0, "Тень % (тормоз)", minval = 25, maxval = 80, group = grp)
+bodyMax   = input.float(55.0, "Макс. тело %", minval = 20, maxval = 70, group = grp)
 tpR       = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
 slPad     = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
 liveAtr   = input.float(0.5, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
 freshBars = input.int(5, "Сигнал N свечей", minval = 1, maxval = 15, group = grp)
 atrLen    = input.int(14, "ATR", group = grp)
+histN     = input.int(40, "Сколько примеров на истории", minval = 5, maxval = 100, group = grp)
 
 colGo = #0ECB81
 colStop = #F6465D
@@ -100,9 +100,9 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-// только последняя метка (не вся история), чтобы не спорить с «ЖДИ»
-plotshape(brakeBot, title = "Тормоз лонг", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small, text = "ТОРМОЗ↑", textcolor = colGo, show_last = 1)
-plotshape(brakeTop, title = "Тормоз шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small, text = "ТОРМОЗ↓", textcolor = colStop, show_last = 1)
+// история снова видна — это ПРИМЕРЫ, не ордера
+plotshape(brakeBot, title = "Пример тормоз ↑", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.tiny, text = "пример↑", textcolor = colGo, show_last = histN)
+plotshape(brakeTop, title = "Пример тормоз ↓", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.tiny, text = "пример↓", textcolor = colStop, show_last = histN)
 
 var line lnE = na
 var line lnS = na
@@ -123,7 +123,7 @@ if barstate.islast
     x2 = bar_index + 6
 
     if status == "WAIT"
-        lb := label.new(bar_index, close, "ЖДИ\nсвечи должны быть видны\nсигнала тормоза нет\nпоставь алерт", style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
+        lb := label.new(bar_index, close, "ЖДИ · сейчас не входи\nзелёные/красные = примеры в прошлом\nордер только при «СЕЙЧАС»\nалерт уже в скрипте — включи колокол", style = label.style_label_left, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
     else if status == "LATE"
         lb := label.new(bar_index, close, "ОПОЗДАЛ · не догоняй", style = label.style_label_left, color = color.new(colLate, 0), textcolor = color.white, size = size.large)
     else if status == "WAIT_FILL" or status == "NOW"
