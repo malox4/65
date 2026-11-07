@@ -166,6 +166,11 @@ trimZonePair(tops, bots, types, boxes, maxN) =>
         if array.size(boxes) > 0
             box.delete(array.shift(boxes))
 
+// TV RE10026: line/box x (bar_index) дальше ~500 от текущего → краш
+clampBar(b) =>
+    int lim = bar_index - 490
+    na(b) ? lim : int(math.max(b, lim))
+
 hiBetween(fromBar, toBar) =>
     int left = math.min(fromBar, toBar)
     int right = math.max(fromBar, toBar)
@@ -285,10 +290,10 @@ else if showLevels and not modeScalp and barstate.islast
     if not na(lblLow)
         label.delete(lblLow)
     if not na(sh1)
-        lvlHigh := line.new(sh1Bar, sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
+        lvlHigh := line.new(clampBar(sh1Bar), sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
         lblHigh := label.new(bar_index + 3, sh1, "H " + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
     if not na(sl1)
-        lvlLow := line.new(sl1Bar, sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
+        lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
         lblLow := label.new(bar_index + 3, sl1, "L " + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
 
 if barstate.islast and not modeScalp
@@ -538,10 +543,10 @@ if showDouble and drawFigUi and barstate.islast
     allowWaitUp = not sharpOnly or trend4h >= 0
     allowWaitDn = not sharpOnly or trend4h <= 0
     if allowWaitUp and not na(neckL) and not na(extL) and close <= neckL
-        neckLineL := line.new(p2Lb, neckL, bar_index + 2, neckL, color = #0ECB81, style = line.style_dashed)
+        neckLineL := line.new(clampBar(p2Lb), neckL, bar_index + 2, neckL, color = #0ECB81, style = line.style_dashed)
         neckWaitL := label.new(bar_index + 2, neckL, sharpOnly ? "ждём шею ↑" : "фигура: двойное дно\nждём пробой шеи вверх", style = label.style_label_left, color = color.new(#0ECB81, 20), textcolor = color.white, size = size.tiny)
     if allowWaitDn and not na(neckH) and not na(extH) and close >= neckH
-        neckLineH := line.new(p2Hb, neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
+        neckLineH := line.new(clampBar(p2Hb), neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
         neckWaitH := label.new(bar_index + 2, neckH, sharpOnly ? "ждём шею ↓" : "фигура: двойная вершина\nждём пробой шеи вниз", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.tiny)
 else if barstate.islast
     if not na(neckLineL)
@@ -715,9 +720,12 @@ if showHs and drawFigUi and barstate.islast
     hsLbl := na
     if hsSide != 0 and not na(hsNeck) and not na(hsExt) and not na(hsLsB) and not na(hsRsB) and not na(hsLsPx) and not na(hsRsPx)
         color hsC = hsSide > 0 ? #0ECB81 : #F6465D
-        hsNeckLn := line.new(hsLsB, hsNeck, bar_index + 2, hsNeck, color = hsC, style = line.style_solid, width = 2)
-        hsLsLn := line.new(hsLsB, hsLsPx, hsHeadB, hsExt, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
-        hsRsLn := line.new(hsHeadB, hsExt, hsRsB, hsRsPx, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
+        int hsX0 = clampBar(hsLsB)
+        int hsXh = clampBar(hsHeadB)
+        int hsXr = clampBar(hsRsB)
+        hsNeckLn := line.new(hsX0, hsNeck, bar_index + 2, hsNeck, color = hsC, style = line.style_solid, width = 2)
+        hsLsLn := line.new(hsX0, hsLsPx, hsXh, hsExt, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
+        hsRsLn := line.new(hsXh, hsExt, hsXr, hsRsPx, color = color.new(hsC, 20), style = line.style_dotted, width = 2)
         string hsTxt = hsSide > 0 ? "перев. голова-плечи\nждём шею ↑" : "голова-плечи\nждём шею ↓"
         bool stillWait = hsSide > 0 ? close <= hsNeck : close >= hsNeck
         if stillWait
@@ -1016,7 +1024,7 @@ if barstate.islast
         box.delete(fibZoneBox)
         fibZoneBox := na
     if drawFibUi and showFib and skDown
-        int x0 = skABar
+        int x0 = clampBar(skABar)
         int x1 = bar_index + 4
         array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
         array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
@@ -1033,7 +1041,7 @@ if barstate.islast
         fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ШОРТ", text_color = #A78BFA, text_size = size.tiny)
         fibState := close < skZoneBot ? "ждём откат ↑ в 0.5–0.618" : inSkShortZone ? "в зоне · ждём медв. свечу" : "выше 0.618 · стоп-зона"
     else if drawFibUi and showFib and skUp
-        int x0 = skABar
+        int x0 = clampBar(skABar)
         int x1 = bar_index + 4
         array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
         array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
