@@ -77,9 +77,9 @@ def build(market: Market) -> dict:
 
 # ── SK Fib: откат по тренду в зону 0.5–0.786 ────────────────────────────
 FIB_SWING = 40
-FIB_MIN_ATR = 3.0
+FIB_MIN_ATR = 2.0
 FIB_ZONE_LO = 0.5
-FIB_ZONE_HI = 0.786
+FIB_ZONE_HI = 0.618  # как в книге SK: зона 0.5–0.618, не 0.786
 FIB_TP1 = 1.272
 FIB_TP2 = 1.618
 
