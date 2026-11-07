@@ -1,0 +1,283 @@
+//@version=6
+// Урок 03.02.2022: лента EMA + зоны сопр/подд + Zoner % + фильтр объёма в тенях.
+// Статус: ЖДИ / СЕЙЧАС / ОПОЗДАЛ. История = «пример», не ордер.
+indicator("Урок · Zoner+Лента", overlay = true, max_lines_count = 40, max_boxes_count = 10, max_labels_count = 30)
+
+grpT = "Лента"
+showRibbon = input.bool(true, "Показать EMA ленту", group = grpT)
+emaFast = input.int(20, "EMA быстрая", group = grpT)
+emaMid  = input.int(50, "EMA средняя", group = grpT)
+emaSlow = input.int(100, "EMA медленная", group = grpT)
+
+grpZ = "Зоны + Zoner"
+swingLen = input.int(5, "Swing", minval = 2, maxval = 15, group = grpZ)
+zoneAtr  = input.float(0.25, "Толщина зоны × ATR", minval = 0.05, step = 0.05, group = grpZ)
+impAtr   = input.float(4.0, "Мин. импульс Zoner × ATR", minval = 1.0, step = 0.5, group = grpZ)
+atrLen   = input.int(14, "ATR", group = grpZ)
+
+grpF = "Фильтр в тенях (урок)"
+volMult  = input.float(1.5, "Объём × SMA", minval = 1.0, step = 0.1, group = grpF)
+wickPct  = input.float(35.0, "Тень % диапазона", minval = 25, maxval = 80, group = grpF)
+tpR      = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grpF)
+slPad    = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grpF)
+liveAtr  = input.float(0.4, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grpF)
+freshBars = input.int(3, "Сигнал N свечей", minval = 1, maxval = 8, group = grpF)
+showHist = input.bool(true, "Примеры на старых свечах", group = grpF)
+
+colSup = #0ECB81
+colRes = #F6465D
+colTp = #3B82F6
+colWait = #848E9C
+colLate = #F6465D
+colZ0 = #F0B90B
+colZn = #848E9C
+
+atr = ta.atr(atrLen)
+e1 = ta.ema(close, emaFast)
+e2 = ta.ema(close, emaMid)
+e3 = ta.ema(close, emaSlow)
+plot(showRibbon ? e1 : na, "EMA20", color = color.new(#0ECB81, 40), linewidth = 1)
+plot(showRibbon ? e2 : na, "EMA50", color = color.new(#F0B90B, 30), linewidth = 2)
+plot(showRibbon ? e3 : na, "EMA100", color = color.new(#F6465D, 40), linewidth = 2)
+trendUp = e1 > e2 and e2 > e3
+trendDn = e1 < e2 and e2 < e3
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float res = na
+var float sup = na
+var int resBorn = na
+var int supBorn = na
+half = zoneAtr * atr
+
+if not na(ph)
+    res := ph
+    resBorn := bar_index - swingLen
+if not na(pl)
+    sup := pl
+    supBorn := bar_index - swingLen
+
+// ——— Zoner: последний импульс (от pl к ph или наоборот) ———
+var float z0 = na
+var float z100 = na
+var int zBorn = na
+var int zDir = 0  // 1 up impulse, -1 down
+
+if not na(ph) and not na(sup)
+    dist = ph - sup
+    if dist >= atr * impAtr
+        z0 := sup
+        z100 := ph
+        zBorn := bar_index - swingLen
+        zDir := 1
+if not na(pl) and not na(res)
+    dist = res - pl
+    if dist >= atr * impAtr
+        // более свежий импульс вниз приоритетнее если ближе к цене
+        useDn = na(z0) or math.abs(close - pl) <= math.abs(close - nz(z0))
+        if useDn
+            z0 := res
+            z100 := pl
+            zBorn := bar_index - swingLen
+            zDir := -1
+
+zSpan = not na(z0) and not na(z100) ? math.abs(z100 - z0) : na
+zPct(p) =>
+    na(zSpan) ? na : zDir == 1 ? z0 + zSpan * p / 100.0 : z0 - zSpan * p / 100.0
+
+lvl0 = zPct(0)
+lvl30 = zPct(30)
+lvl50 = zPct(50)
+lvl90 = zPct(90)
+lvl100 = zPct(100)
+lvlM20 = zPct(-20)
+lvl120 = zPct(120)
+
+// ——— фильтр в тенях (прокси урока) ———
+volSma = ta.sma(volume, 20)
+rng = math.max(high - low, syminfo.mintick)
+upW = (high - math.max(open, close)) / rng * 100.0
+loW = (math.min(open, close) - low) / rng * 100.0
+hiVol = volume > volSma * volMult
+
+// продажи в нижней тени + отбой вверх
+limBuy = hiVol and loW >= wickPct and close > (high + low) / 2.0 and close > open
+// покупки в верхней тени + отбой вниз
+limSell = hiVol and upW >= wickPct and close < (high + low) / 2.0 and close < open
+
+pad = slPad * atr
+float entry = na
+float stop = na
+float take = na
+int side = 0
+string mode = ""
+
+if limBuy
+    e = (low + close) / 2.0
+    s = low - pad
+    r = e - s
+    if r > 0
+        entry := e
+        stop := s
+        take := e + tpR * r
+        if not na(lvl50) and zDir == 1 and lvl50 > e
+            take := math.min(take, lvl50)
+        side := 1
+        mode := "ТЕНЬ: продажи снизу"
+
+if limSell and na(entry)
+    e = (high + close) / 2.0
+    s = high + pad
+    r = s - e
+    if r > 0
+        entry := e
+        stop := s
+        take := e - tpR * r
+        if not na(lvl50) and zDir == -1 and lvl50 < e
+            take := math.max(take, lvl50)
+        side := -1
+        mode := "ТЕНЬ: покупки сверху"
+
+var float eMem = na
+var float sMem = na
+var float tMem = na
+var int sideMem = 0
+var string modeMem = ""
+var int bornMem = na
+
+if not na(entry) and side != 0
+    eMem := entry
+    sMem := stop
+    tMem := take
+    sideMem := side
+    modeMem := mode
+    bornMem := bar_index
+
+sigAge = na(bornMem) ? 1000 : bar_index - bornMem
+haveSig = not na(eMem) and sigAge <= freshBars
+
+if haveSig
+    entry := eMem
+    stop := sMem
+    take := tMem
+    side := sideMem
+    mode := modeMem
+else
+    eMem := na
+    sMem := na
+    tMem := na
+    sideMem := 0
+    modeMem := ""
+    bornMem := na
+    entry := na
+    stop := na
+    take := na
+    side := 0
+    mode := ""
+
+nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
+late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
+status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+
+plotshape(showHist and limBuy, title = "Пример отбой вверх", style = shape.triangleup, location = location.belowbar, color = colSup, size = size.tiny, text = "пример\nотбой ↑", textcolor = colSup)
+plotshape(showHist and limSell, title = "Пример отбой вниз", style = shape.triangledown, location = location.abovebar, color = colRes, size = size.tiny, text = "пример\nотбой ↓", textcolor = colRes)
+
+var box bRes = na
+var box bSup = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var line ln0 = na
+var line ln50 = na
+var line ln100 = na
+var line lnM20 = na
+var line ln120 = na
+var label lb = na
+var label lbE = na
+var label lbS = na
+var label lbT = na
+var label lbRes = na
+var label lbSup = na
+var label lb0 = na
+var label lb50 = na
+var label lb100 = na
+
+if barstate.islast
+    box.delete(bRes)
+    box.delete(bSup)
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    line.delete(ln0)
+    line.delete(ln50)
+    line.delete(ln100)
+    line.delete(lnM20)
+    line.delete(ln120)
+    label.delete(lb)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT)
+    label.delete(lbRes)
+    label.delete(lbSup)
+    label.delete(lb0)
+    label.delete(lb50)
+    label.delete(lb100)
+
+    x2 = bar_index + 8
+    if not na(res) and not na(resBorn)
+        bRes := box.new(resBorn, res + half, x2, res - half, bgcolor = color.new(colRes, 82), border_color = colRes)
+        lbRes := label.new(x2, res, "ЗОНА СОПР", style = label.style_label_left, color = color.new(colRes, 10), textcolor = color.white, size = size.small)
+    if not na(sup) and not na(supBorn)
+        bSup := box.new(supBorn, sup + half, x2, sup - half, bgcolor = color.new(colSup, 82), border_color = colSup)
+        lbSup := label.new(x2, sup, "ЗОНА ПОДД", style = label.style_label_left, color = color.new(colSup, 10), textcolor = color.white, size = size.small)
+
+    x1 = na(zBorn) ? bar_index - 40 : math.max(zBorn, bar_index - 80)
+    if not na(lvl0)
+        ln0 := line.new(x1, lvl0, x2, lvl0, color = colZ0, width = 2)
+        lb0 := label.new(x2, lvl0, "Zoner 0%", style = label.style_label_left, color = color.new(colZ0, 20), textcolor = color.black, size = size.small)
+    if not na(lvl50)
+        ln50 := line.new(x1, lvl50, x2, lvl50, color = colZn, width = 1, style = line.style_dashed)
+        lb50 := label.new(x2, lvl50, "50%", style = label.style_label_left, color = color.new(colZn, 40), textcolor = color.white, size = size.tiny)
+    if not na(lvl100)
+        ln100 := line.new(x1, lvl100, x2, lvl100, color = colTp, width = 2)
+        lb100 := label.new(x2, lvl100, "100%", style = label.style_label_left, color = color.new(colTp, 20), textcolor = color.white, size = size.small)
+    if not na(lvlM20)
+        lnM20 := line.new(x1, lvlM20, x2, lvlM20, color = color.new(colRes, 50), width = 1, style = line.style_dotted)
+    if not na(lvl120)
+        ln120 := line.new(x1, lvl120, x2, lvl120, color = color.new(colRes, 50), width = 1, style = line.style_dotted)
+
+    tr = trendUp ? "лента ВВЕРХ" : trendDn ? "лента ВНИЗ" : "лента боком"
+    if status == "WAIT"
+        lb := label.new(x2, close, "СЕЙЧАС НЕ ВХОДИ\n" + tr + "\nтреугольники = примеры\nжди «ЛОНГ/ШОРТ СЕЙЧАС»", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+    else if status == "LATE"
+        lb := label.new(x2, close, "ОПОЗДАЛ · не догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
+    else if status == "WAIT_FILL"
+        lb := label.new(x2, entry, mode + "\nжди цену К зелёной", style = label.style_label_left, color = color.new(colZ0, 10), textcolor = color.black, size = size.normal)
+        lnE := line.new(bar_index - 2, entry, x2, entry, color = colSup, width = 3)
+        lnS := line.new(bar_index - 2, stop, x2, stop, color = colRes, width = 2)
+        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 2)
+        lbE := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = colSup, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "СТОП", style = label.style_label_left, color = colRes, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+    else
+        sideTxt = side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС"
+        col = side == 1 ? colSup : colRes
+        lb := label.new(x2, entry, sideTxt + "\n" + mode + "\n1 вход  2 стоп  3 тейк", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lnE := line.new(bar_index - 2, entry, x2, entry, color = colSup, width = 4)
+        lnS := line.new(bar_index - 2, stop, x2, stop, color = colRes, width = 3)
+        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 3)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colSup, textcolor = color.white, size = size.normal)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colRes, textcolor = color.white, size = size.normal)
+        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+
+var table t = table.new(position.bottom_right, 1, 4, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди цену к зелёной" : "⏳ ЖДИ · " + (trendUp ? "лента↑" : trendDn ? "лента↓" : "боковик")
+    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colSup : status == "LATE" ? colLate : colZ0, text_size = size.large)
+    table.cell(t, 0, 1, haveSig ? (mode + " | вход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "урок 03.02.2022: лента + Zoner% + объём в тенях", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "треугольники = примеры · ордер только при СЕЙЧАС", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 3, "файл: tradingview/lesson_zoner_ribbon.pine", text_color = #848E9C, text_size = size.tiny)
+
+alertcondition(status == "NOW" and side == 1, "Лонг сейчас", "Урок Zoner: ЛОНГ СЕЙЧАС")
+alertcondition(status == "NOW" and side == -1, "Шорт сейчас", "Урок Zoner: ШОРТ СЕЙЧАС")
