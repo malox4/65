@@ -1,6 +1,6 @@
 //@version=6
 // 65 SMC Map: уровень · пробой · фигура · потенциальная свеча
-// + фикс RE10026 (clampBar) и label.new не в ternary
+// Фикс: RE10026 + без пустых «пробелов» шкалы (дальние Fib/уровни не рисуем)
 indicator("65 Map Algo", overlay = true, max_boxes_count = 300, max_lines_count = 300, max_labels_count = 300)
 
 // ── inputs ──────────────────────────────────────────────────────────────
@@ -138,6 +138,11 @@ clampBar(b) =>
     int lim = bar_index - 490
     na(b) ? lim : int(math.max(b, lim))
 
+// не рисовать уровни далеко от цены — иначе на графике пустые «пробелы» и свечи схлопываются
+nearPx(px) =>
+    float a = ta.atr(atrLen)
+    not na(px) and not na(a) and math.abs(px - close) <= 6.0 * a
+
 hiBetween(fromBar, toBar) =>
     int left = math.min(fromBar, toBar)
     int right = math.max(fromBar, toBar)
@@ -233,12 +238,12 @@ if showLevels and barstate.islast
         label.delete(lblHigh)
     if not na(lblLow)
         label.delete(lblLow)
-    if not na(sh1)
+    if nearPx(sh1)
         lvlHigh := line.new(clampBar(sh1Bar), sh1, bar_index + 3, sh1, color = color.new(#F6465D, 30), style = line.style_dotted, width = 1)
-        lblHigh := label.new(bar_index + 3, sh1, "уровень H\n" + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
-    if not na(sl1)
+        lblHigh := label.new(bar_index + 3, sh1, "H " + str.tostring(sh1, format.mintick), style = label.style_label_left, color = color.new(#F6465D, 80), textcolor = #F6465D, size = size.tiny)
+    if nearPx(sl1)
         lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
-        lblLow := label.new(bar_index + 3, sl1, "уровень L\n" + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
+        lblLow := label.new(bar_index + 3, sl1, "L " + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
 
 if barstate.islast
     table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
@@ -893,35 +898,43 @@ if barstate.islast
     if showFib and skDown
         int x0 = clampBar(skABar)
         int x1 = bar_index + 4
-        array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        if nearPx(skA)
+            array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
+            array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
         array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = #F0B90B, style = line.style_solid, width = 2))
         array.push(fibRailLbl, label.new(x1, skZ0, str.tostring(fibZoneLo, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
         array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = #F0B90B, style = line.style_solid, width = 2))
         array.push(fibRailLbl, label.new(x1, skZ1, str.tostring(fibZoneHi, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
-        array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        if nearPx(skB)
+            array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
+            array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        if nearPx(skExt127)
+            array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
+            array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        if nearPx(skExt161)
+            array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
+            array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
         fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ШОРТ", text_color = #A78BFA, text_size = size.tiny)
         fibState := close < skZoneBot ? "ждём откат ↑ в 0.5–0.618" : inSkShortZone ? "в зоне · ждём медв. свечу" : "выше 0.618 · стоп-зона"
     else if showFib and skUp
         int x0 = clampBar(skABar)
         int x1 = bar_index + 4
-        array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        if nearPx(skA)
+            array.push(fibRails, line.new(x0, skA, x1, skA, color = #848E9C, style = line.style_dotted, width = 1))
+            array.push(fibRailLbl, label.new(x1, skA, "0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
         array.push(fibRails, line.new(x0, skZ0, x1, skZ0, color = #F0B90B, style = line.style_solid, width = 2))
         array.push(fibRailLbl, label.new(x1, skZ0, str.tostring(fibZoneLo, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
         array.push(fibRails, line.new(x0, skZ1, x1, skZ1, color = #F0B90B, style = line.style_solid, width = 2))
         array.push(fibRailLbl, label.new(x1, skZ1, str.tostring(fibZoneHi, "#.###"), style = label.style_label_left, color = color.new(#F0B90B, 80), textcolor = #F0B90B, size = size.tiny))
-        array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
-        array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
-        array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
-        array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        if nearPx(skB)
+            array.push(fibRails, line.new(x0, skB, x1, skB, color = #848E9C, style = line.style_dotted, width = 1))
+            array.push(fibRailLbl, label.new(x1, skB, "1.0", style = label.style_label_left, color = color.new(#848E9C, 80), textcolor = #848E9C, size = size.tiny))
+        if nearPx(skExt127)
+            array.push(fibRails, line.new(x0, skExt127, x1, skExt127, color = #0ECB81, style = line.style_dotted, width = 1))
+            array.push(fibRailLbl, label.new(x1, skExt127, str.tostring(fibTp1, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
+        if nearPx(skExt161)
+            array.push(fibRails, line.new(x0, skExt161, x1, skExt161, color = #0ECB81, style = line.style_solid, width = 2))
+            array.push(fibRailLbl, label.new(x1, skExt161, str.tostring(fibTp2, "#.###"), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny))
         fibZoneBox := box.new(x0, skZoneTop, x1, skZoneBot, border_color = color.new(#8B5CF6, 40), bgcolor = color.new(#8B5CF6, 88), text = "зона 0.5–0.618 · ЛОНГ", text_color = #A78BFA, text_size = size.tiny)
         fibState := close > skZoneTop ? "ждём откат ↓ в 0.5–0.618" : inSkLongZone ? "в зоне · ждём быч. свечу" : "ниже 0.618 · стоп-зона"
     else if showFib
@@ -1235,9 +1248,9 @@ if algoStyle and planEnter
 
     int xR = bar_index + useHorizon
     if planSide > 0
-        actBuySell := label.new(bar_index, low, modeScalp ? "BUY SCALP" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.large)
+        actBuySell := label.new(bar_index, low, modeScalp ? "BUY SCALP" : "BUY", style = label.style_label_up, color = #00E676, textcolor = #000000, size = size.normal)
     else
-        actBuySell := label.new(bar_index, high, modeScalp ? "SELL SCALP" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.large)
+        actBuySell := label.new(bar_index, high, modeScalp ? "SELL SCALP" : "SELL", style = label.style_label_down, color = #FF1744, textcolor = #FFFFFF, size = size.normal)
     if planSide > 0
         actSl := box.new(bar_index, planEntry, xR, planStop, border_color = color.new(#FF1744, 0), bgcolor = color.new(#FF1744, 82), border_width = 1)
         actTpZone := box.new(bar_index, p3, xR, planEntry, border_color = color.new(#00E676, 40), bgcolor = color.new(#00E676, 90), border_width = 1)
