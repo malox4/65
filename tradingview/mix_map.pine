@@ -1021,10 +1021,10 @@ if useZ146
                 zLvl := zL
                 zLvlSide := zDir
                 zLvlBar := bar_index
-                if paintMap
+                if paintMap and nearPx(zL)
                     if not na(zLvlLn)
                         line.delete(zLvlLn)
-                    zLvlLn := line.new(bar_index, zL, bar_index + 20, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 2)
+                    zLvlLn := line.new(bar_index, zL, bar_index + 12, zL, color = zDir > 0 ? #00E676 : #FF1744, width = 1)
         zLastP := zExt
         zLastPi := zExtI
         zDir := -zDir
