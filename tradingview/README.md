@@ -43,6 +43,16 @@
 1. Pine Editor → вставить весь `deltariver_clusters_lesson.pine` → Save → Add to chart.
 2. ТФ **15m**, LTF **1m**; пороги дельты **обязательно** подстроить под монету.
 
+## Урок 06.03.2023 · DR Setup (`lesson_dr_setup.pine`)
+
+Настройка DeltaRiver под BTC: фильтр **тень 65%** / **тело 90%**, Zoner/POC/BigTrades на записи. На TV — тот же UX, что SpeedTape: ▲▼, план-стрелка, ТЕЙК/СТОП, ЖДИ/СЕЙЧАС.
+
+Док: [`docs/lesson_deltariver_setup_2023-03-06.md`](../docs/lesson_deltariver_setup_2023-03-06.md).  
+Индикатор: **«65 DR Setup»** (`overlay = true`).
+
+1. Вставить `lesson_dr_setup.pine` → Save → **Add to chart** (на свечах, не внизу).  
+2. ТФ **15m**. Старые pine не удалять.
+
 ## Урок 15.02.2023 · Тормозной бар (`lesson_brake_bar.pine`)
 
 База: **рыночный vs лимитный** ордер, **тормозной бар** (лимитка в тени свечи). Статусы ЖДИ / СЕЙЧАС / ОПОЗДАЛ.
