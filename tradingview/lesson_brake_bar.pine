@@ -142,7 +142,27 @@ if barstate.islast
     big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди линию ВХОД" : "⏳ ЖДИ"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
     table.cell(t, 0, 1, haveSig ? (mode + "\nвход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "нет тормоза · жди длинную тень + объём", text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, "если нет свечей: глазик у тикера включи", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 2, "Алерт: колокол → этот индикатор → Once Per Bar Close → Any alert() function call", text_color = #848E9C, text_size = size.tiny)
 
-alertcondition(status == "NOW" and side == 1, "Лонг", "Тормоз снизу — ЛОНГ")
-alertcondition(status == "NOW" and side == -1, "Шорт", "Тормоз сверху — ШОРТ")
+// ——— АЛЕРТЫ ———
+// 1) только что появился тормоз
+newBrakeLong = brakeBot and not na(bornMem) and bar_index == bornMem and side == 1
+newBrakeShort = brakeTop and not na(bornMem) and bar_index == bornMem and side == -1
+// 2) можно входить сейчас (цена у входа)
+goLong = status == "NOW" and side == 1 and not (status[1] == "NOW" and side[1] == 1)
+goShort = status == "NOW" and side == -1 and not (status[1] == "NOW" and side[1] == -1)
+
+if barstate.isconfirmed
+    if newBrakeLong
+        alert("ТОРМОЗ↑ ЛОНГ · " + syminfo.ticker + " · вход ~ " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick), alert.freq_once_per_bar_close)
+    if newBrakeShort
+        alert("ТОРМОЗ↓ ШОРТ · " + syminfo.ticker + " · вход ~ " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick), alert.freq_once_per_bar_close)
+    if goLong and not newBrakeLong
+        alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker + " · цена у входа " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
+    if goShort and not newBrakeShort
+        alert("ШОРТ СЕЙЧАС · " + syminfo.ticker + " · цена у входа " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
+
+alertcondition(newBrakeLong, title = "Тормоз лонг", message = "Тормоз снизу — смотри ЛОНГ")
+alertcondition(newBrakeShort, title = "Тормоз шорт", message = "Тормоз сверху — смотри ШОРТ")
+alertcondition(goLong, title = "Лонг сейчас", message = "ЛОНГ СЕЙЧАС — цена у входа")
+alertcondition(goShort, title = "Шорт сейчас", message = "ШОРТ СЕЙЧАС — цена у входа")
