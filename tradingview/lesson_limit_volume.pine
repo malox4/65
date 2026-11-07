@@ -1,0 +1,223 @@
+//@version=6
+// Урок 01.03.2023: объёмный уровень (POC) + лимитный покупатель/продавец.
+// Верх свечи = покупки, низ = продажи. Статус: ЖДИ / СЕЙЧАС / ОПОЗДАЛ.
+indicator("Урок · Лимит+Объём", overlay = true, max_lines_count = 20, max_labels_count = 20)
+
+grp = "План"
+lookback = input.int(48, "Окно профиля (баров)", minval = 20, maxval = 200, group = grp)
+vaPct    = input.float(70.0, "Value Area %", minval = 50, maxval = 90, step = 5, group = grp)
+volMult  = input.float(1.8, "Мин. объём × SMA", minval = 1.0, step = 0.1, group = grp)
+wickPct  = input.float(45.0, "Мин. тень % диапазона", minval = 25, maxval = 80, group = grp)
+tpR      = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
+slPad    = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
+liveAtr  = input.float(0.4, "СЕЙЧАС если цена ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
+freshBars = input.int(3, "Сигнал держать N свечей", minval = 1, maxval = 8, group = grp)
+atrLen   = input.int(14, "ATR", group = grp)
+volLen   = input.int(20, "SMA объёма", group = grp)
+
+colPoc = #F0B90B
+colVa  = #848E9C
+colBuy = #0ECB81
+colSell = #F6465D
+colTp = #3B82F6
+colWait = #848E9C
+colLate = #F6465D
+
+atr = ta.atr(atrLen)
+volSma = ta.sma(volume, volLen)
+rng = math.max(high - low, syminfo.mintick)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+upPct = upperWick / rng * 100.0
+loPct = lowerWick / rng * 100.0
+hiVol = volume > volSma * volMult
+
+// ——— POC / VAL / VAH прокси: по close баров в окне, вес = volume ———
+f_profile() =>
+    float bestV = -1.0
+    float poc = na
+    float sumV = 0.0
+    for i = 0 to lookback - 1
+        v = volume[i]
+        sumV += v
+        if v > bestV
+            bestV := v
+            poc := close[i]
+    // value area: набираем ~vaPct объёма вокруг POC по соседним барам (грубый прокси)
+    float target = sumV * vaPct / 100.0
+    float acc = 0.0
+    float lo = poc
+    float hi = poc
+    for i = 0 to lookback - 1
+        c = close[i]
+        v = volume[i]
+        if math.abs(c - poc) <= atr * 3.0
+            acc += v
+            lo := math.min(lo, c)
+            hi := math.max(hi, c)
+            if acc >= target
+                break
+    [poc, lo, hi]
+
+[poc, val, vah] = f_profile()
+
+// ——— лимитный игрок ———
+// лимит покупатель: жирный объём + длинная нижняя тень + close в верхней половине
+limitBuy = hiVol and loPct >= wickPct and close > (high + low) / 2.0 and close > open
+// лимит продавец: жирный объём + длинная верхняя тень + close в нижней половине
+limitSell = hiVol and upPct >= wickPct and close < (high + low) / 2.0 and close < open
+
+// усиление: рядом с объёмным уровнем
+nearPoc = not na(poc) and math.abs(close - poc) <= atr * 1.2
+
+float entry = na
+float stop = na
+float take = na
+int side = 0
+string mode = ""
+
+pad = slPad * atr
+
+// вход у тела реакции (середина low↔close / high↔close), стоп за экстремум свечи
+if limitBuy
+    e = (low + close) / 2.0
+    s = low - pad
+    r = e - s
+    if r > 0
+        entry := e
+        stop := s
+        take := e + tpR * r
+        if not na(poc) and poc > e
+            take := math.min(take, poc + atr * 0.2)
+        side := 1
+        mode := "ЛИМИТ ПОКУПАТЕЛЬ"
+
+if limitSell and na(entry)
+    e = (high + close) / 2.0
+    s = high + pad
+    r = s - e
+    if r > 0
+        entry := e
+        stop := s
+        take := e - tpR * r
+        if not na(poc) and poc < e
+            take := math.max(take, poc - atr * 0.2)
+        side := -1
+        mode := "ЛИМИТ ПРОДАВЕЦ"
+
+var float eMem = na
+var float sMem = na
+var float tMem = na
+var int sideMem = 0
+var string modeMem = ""
+var int bornMem = na
+
+if not na(entry) and side != 0
+    eMem := entry
+    sMem := stop
+    tMem := take
+    sideMem := side
+    modeMem := mode
+    bornMem := bar_index
+
+sigAge = na(bornMem) ? 1000 : bar_index - bornMem
+haveSig = not na(eMem) and sigAge <= freshBars
+
+if haveSig
+    entry := eMem
+    stop := sMem
+    take := tMem
+    side := sideMem
+    mode := modeMem
+else
+    eMem := na
+    sMem := na
+    tMem := na
+    sideMem := 0
+    modeMem := ""
+    bornMem := na
+    entry := na
+    stop := na
+    take := na
+    side := 0
+    mode := ""
+
+nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
+late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
+status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
+
+// ——— рисунок ———
+var line lnPoc = na
+var line lnVal = na
+var line lnVah = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var label lb = na
+var label lbP = na
+var label lbLo = na
+var label lbHi = na
+var label lbE = na
+var label lbS = na
+var label lbT = na
+
+if barstate.islast
+    line.delete(lnPoc)
+    line.delete(lnVal)
+    line.delete(lnVah)
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    label.delete(lb)
+    label.delete(lbP)
+    label.delete(lbLo)
+    label.delete(lbHi)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT)
+
+    x1 = bar_index - lookback
+    x2 = bar_index + 8
+    if not na(poc)
+        lnPoc := line.new(x1, poc, x2, poc, color = colPoc, width = 2)
+        lbP := label.new(x2, poc, "ОБЪЁМНЫЙ УРОВЕНЬ (POC)", style = label.style_label_left, color = color.new(colPoc, 10), textcolor = color.black, size = size.small)
+    if not na(val)
+        lnVal := line.new(x1, val, x2, val, color = colVa, width = 1, style = line.style_dashed)
+        lbLo := label.new(x2, val, "VAL", style = label.style_label_left, color = color.new(colVa, 30), textcolor = color.white, size = size.tiny)
+    if not na(vah)
+        lnVah := line.new(x1, vah, x2, vah, color = colVa, width = 1, style = line.style_dashed)
+        lbHi := label.new(x2, vah, "VAH", style = label.style_label_left, color = color.new(colVa, 30), textcolor = color.white, size = size.tiny)
+
+    if status == "WAIT"
+        lb := label.new(x2, close, "ЖДИ\nреакцию у объёмного уровня\nили лимитного игрока", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+    else if status == "LATE"
+        lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
+    else if status == "WAIT_FILL"
+        lb := label.new(x2, entry, mode + "\nжди цену К зелёной", style = label.style_label_left, color = color.new(colPoc, 10), textcolor = color.black, size = size.normal)
+        lnE := line.new(bar_index - 2, entry, x2, entry, color = colBuy, width = 3)
+        lnS := line.new(bar_index - 2, stop, x2, stop, color = colSell, width = 2)
+        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 2)
+        lbE := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = colBuy, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "СТОП", style = label.style_label_left, color = colSell, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+    else
+        sideTxt = side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС"
+        col = side == 1 ? colBuy : colSell
+        lb := label.new(x2, entry, sideTxt + "\n" + mode + "\n1 вход  2 стоп  3 тейк", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lnE := line.new(bar_index - 2, entry, x2, entry, color = colBuy, width = 4)
+        lnS := line.new(bar_index - 2, stop, x2, stop, color = colSell, width = 3)
+        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 3)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colBuy, textcolor = color.white, size = size.normal)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colSell, textcolor = color.white, size = size.normal)
+        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+
+var table t = table.new(position.bottom_right, 1, 4, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди цену к зелёной" : "⏳ ЖДИ · объём / лимитник"
+    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colBuy : status == "LATE" ? colLate : colPoc, text_size = size.large)
+    table.cell(t, 0, 1, haveSig ? (mode + " | вход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "урок: реакция на объёмный уровень + лимитный игрок", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "POC " + (na(poc) ? "—" : str.tostring(poc, format.mintick)) + " | VAL/VAH прокси", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 3, "файл: tradingview/lesson_limit_volume.pine", text_color = #848E9C, text_size = size.tiny)
+
+alertcondition(status == "NOW" and side == 1, "Лимит покупатель", "ЛОНГ: лимитный покупатель")
+alertcondition(status == "NOW" and side == -1, "Лимит продавец", "ШОРТ: лимитный продавец")
