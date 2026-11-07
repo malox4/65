@@ -239,7 +239,7 @@ if showLevels and barstate.islast
         lvlLow := line.new(clampBar(sl1Bar), sl1, bar_index + 3, sl1, color = color.new(#0ECB81, 30), style = line.style_dotted, width = 1)
         lblLow := label.new(bar_index + 3, sl1, "уровень L\n" + str.tostring(sl1, format.mintick), style = label.style_label_left, color = color.new(#0ECB81, 80), textcolor = #0ECB81, size = size.tiny)
 
-if barstate.islast and not modeScalp
+if barstate.islast
     table.cell(dash, 1, 2, structure > 0 ? "бычья" : structure < 0 ? "медвежья" : "нет", text_color = col(structure), text_size = size.small)
     table.cell(dash, 1, 3, not na(sh1) and not na(sl1) ? str.tostring(sh1, format.mintick) + " / " + str.tostring(sl1, format.mintick) : "—", text_color = #EAECEF, text_size = size.tiny)
 
@@ -449,19 +449,6 @@ if showDouble and barstate.islast
     if allowWaitDn and not na(neckH) and not na(extH) and close >= neckH
         neckLineH := line.new(clampBar(p2Hb), neckH, bar_index + 2, neckH, color = #F6465D, style = line.style_dashed)
         neckWaitH := label.new(bar_index + 2, neckH, sharpOnly ? "ждём шею ↓" : "фигура: двойная вершина\nждём пробой шеи вниз", style = label.style_label_left, color = color.new(#F6465D, 20), textcolor = color.white, size = size.tiny)
-else if modeScalp and barstate.islast
-    if not na(neckLineL)
-        line.delete(neckLineL)
-        neckLineL := na
-    if not na(neckLineH)
-        line.delete(neckLineH)
-        neckLineH := na
-    if not na(neckWaitL)
-        label.delete(neckWaitL)
-        neckWaitL := na
-    if not na(neckWaitH)
-        label.delete(neckWaitH)
-        neckWaitH := na
 
 rawDblUp = showDouble and ok and not na(neckL) and close > neckL and close[1] <= neckL and not na(extL) and neckL - extL >= atrV
 rawDblDn = showDouble and ok and not na(neckH) and close < neckH and close[1] >= neckH and not na(extH) and extH - neckH >= atrV
@@ -631,19 +618,6 @@ if showHs and barstate.islast
         bool stillWait = hsSide > 0 ? close <= hsNeck : close >= hsNeck
         if stillWait
             hsLbl := label.new(bar_index + 2, hsNeck, hsTxt, style = label.style_label_left, color = color.new(hsC, 15), textcolor = color.white, size = size.small)
-else if modeScalp and barstate.islast
-    if not na(hsNeckLn)
-        line.delete(hsNeckLn)
-        hsNeckLn := na
-    if not na(hsLsLn)
-        line.delete(hsLsLn)
-        hsLsLn := na
-    if not na(hsRsLn)
-        line.delete(hsRsLn)
-        hsRsLn := na
-    if not na(hsLbl)
-        label.delete(hsLbl)
-        hsLbl := na
 
 rawHsUp = showHs and ok and hsSide > 0 and not na(hsNeck) and not na(hsExt) and close > hsNeck and close[1] <= hsNeck and hsNeck - hsExt >= atrV
 rawHsDn = showHs and ok and hsSide < 0 and not na(hsNeck) and not na(hsExt) and close < hsNeck and close[1] >= hsNeck and hsExt - hsNeck >= atrV
@@ -679,13 +653,13 @@ retestShort = not na(pendShortBar) and bar_index > pendShortBar and (inBearOb or
 smcLongOk = retestLong
 smcShortOk = retestShort
 // на минутке фигуры почти всегда шум — скальп только ретест / EMA / sweep
-figLongOk = modeScalp ? false : (sqBreakUp or dblUp or hsUp)
-figShortOk = modeScalp ? false : (sqBreakDn or dblDn or hsDn)
+figLongOk = sqBreakUp or dblUp or hsUp
+figShortOk = sqBreakDn or dblDn or hsDn
 longSetup = showEntries and ok and htfLong and volOk and (figLongOk or smcLongOk)
 shortSetup = showEntries and ok and htfShort and volOk and (figShortOk or smcShortOk)
 
 waiting = not na(pendLongBar) ? "ретест после " + pendLongWhy : not na(pendShortBar) ? "ретест после " + pendShortWhy : inSqueeze ? "пробой сжатия" : waitHsUp ? "пробой перев. Г-П" : waitHsDn ? "пробой головы-плеч" : waitDblUp ? "пробой двойного дна" : waitDblDn ? "пробой двойной вершины" : inBullOb or inBearOb ? "возврат в OB" : inBullFvg or inBearFvg ? "работа с FVG" : "—"
-if barstate.islast and not modeScalp
+if barstate.islast
     table.cell(dash, 1, 4, waiting, text_color = #F0B90B, text_size = size.tiny)
 
 var int lastLong = na
@@ -951,8 +925,7 @@ if barstate.islast
         fibState := close > skZoneTop ? "ждём откат ↓ в 0.5–0.618" : inSkLongZone ? "в зоне · ждём быч. свечу" : "ниже 0.618 · стоп-зона"
     else if showFib
         fibState := not na(skA) and na(skB) ? (skSide < 0 ? "ждём low импульса ↓" : "ждём high импульса ↑") : "импульса нет"
-    if not modeScalp
-        table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
+    table.cell(dash, 1, 5, fibState, text_color = #8B5CF6, text_size = size.tiny)
 
 // ── доп. стратегии: Z146 / Sweep-ретест / EMA / FVG fill / Asian ────────
 // Z146 ZigZag уровни + вход при касании и развороте
