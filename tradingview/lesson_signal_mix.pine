@@ -2,7 +2,7 @@
 // 65 Signal Mix — микс уроков + старых скриптов.
 // На графике ТОЛЬКО: сигнал · почему · рисунок причины · вход/стоп/тейк с ценой.
 // Остальные модули считают в фоне и голосуют (конфлюенс).
-indicator("65 Signal Mix", overlay = true, max_labels_count = 80, max_lines_count = 60, max_boxes_count = 16)
+indicator("65 Signal Mix", overlay = true, max_labels_count = 100, max_lines_count = 80, max_boxes_count = 30)
 
 grp = "Сигнал"
 minVotes   = input.int(2, "Мин. совпадений (точность)", minval = 1, maxval = 6, group = grp, tooltip = "Сколько модулей должны сказать в одну сторону. 2–3 = точнее, меньше спама.")
@@ -728,10 +728,101 @@ float take2 = na
 float take3 = na
 int side = 0
 string why = ""
-int drawCode = 0
-float dY1 = na
-float dY2 = na
 int votes = 0
+
+// снимок ВСЕХ причин для рисунка (не только первой)
+var array<float> whyTopA = array.new_float()
+var array<float> whyBotA = array.new_float()
+var array<string> whyNameA = array.new_string()
+var array<int> whyLeftA = array.new_int()
+var array<int> whyKindA = array.new_int()  // 0=box 1=level 2=tl
+
+clearWhy() =>
+    array.clear(whyTopA)
+    array.clear(whyBotA)
+    array.clear(whyNameA)
+    array.clear(whyLeftA)
+    array.clear(whyKindA)
+
+pushWhy(float top, float bot, string nm, int leftBars, int kind) =>
+    array.push(whyTopA, top)
+    array.push(whyBotA, bot)
+    array.push(whyNameA, nm)
+    array.push(whyLeftA, leftBars)
+    array.push(whyKindA, kind)
+
+snapWhy(int sdir) =>
+    clearWhy()
+    if sdir == 1
+        if sweepLong
+            pushWhy(priorLo, priorLo, "свип лоу", 8, 1)
+        if brakeBot
+            pushWhy(high, low, "тормоз", 1, 0)
+        if tapeLong
+            pushWhy(high, low, "Speed", 1, 0)
+        if drLong
+            pushWhy(math.min(open, close), low, "DR тень", 1, 0)
+        if tlLong and not na(h2) and not na(tlDn)
+            pushWhy(h2, tlDn, "↓тренд", math.max(1, bar_index - nz(hb2, bar_index)), 2)
+        if defLong or brkLong
+            pushWhy(zTop, zBot, defLong ? "защита зоны" : "пробой зоны", 10, 0)
+        if obRetLong
+            pushWhy(obTop, obBot, "ОБ↑", 8, 0)
+        if ibUp
+            pushWhy(motherHigh, motherLow, "инсайд", 2, 0)
+        if fibLongSig
+            pushWhy(skZoneTop, skZoneBot, "SK Fib", 12, 0)
+        if bosRetLong
+            pushWhy(pendLvl, pendLvl, "BOS/CHoCH", 8, 1)
+        if fvgLong
+            pushWhy(fvgTop, fvgBot, "FVG", 10, 0)
+        if z146Long
+            pushWhy(zLvl, zLvl, "Z146", 8, 1)
+        if emaLong
+            pushWhy(emaF, emaF, "EMA", 6, 1)
+        if asiaLong
+            pushWhy(asiaHi, asiaLo, "Asia", 16, 0)
+        if sqUp
+            pushWhy(sqHigh[1], sqLow[1], "сжатие", sqBars, 0)
+        if dblUp
+            pushWhy(neckL, extL, "двойное дно", 12, 0)
+        if swRetLong
+            pushWhy(mapSweepLvl, mapSweepLvl, "sweep-ретест", 8, 1)
+    else
+        if sweepShort
+            pushWhy(priorHi, priorHi, "свип хая", 8, 1)
+        if brakeTop
+            pushWhy(high, low, "тормоз", 1, 0)
+        if tapeShort
+            pushWhy(high, low, "Speed", 1, 0)
+        if drShort
+            pushWhy(high, math.max(open, close), "DR тень", 1, 0)
+        if tlShort and not na(l2) and not na(tlUp)
+            pushWhy(l2, tlUp, "↑тренд", math.max(1, bar_index - nz(lb2, bar_index)), 2)
+        if defShort or brkShort
+            pushWhy(zTop, zBot, defShort ? "защита зоны" : "пробой зоны", 10, 0)
+        if obRetShort
+            pushWhy(obTop, obBot, "ОБ↓", 8, 0)
+        if ibDn
+            pushWhy(motherHigh, motherLow, "инсайд", 2, 0)
+        if fibShortSig
+            pushWhy(skZoneTop, skZoneBot, "SK Fib", 12, 0)
+        if bosRetShort
+            pushWhy(pendLvl, pendLvl, "BOS/CHoCH", 8, 1)
+        if fvgShort
+            pushWhy(fvgTop, fvgBot, "FVG", 10, 0)
+        if z146Short
+            pushWhy(zLvl, zLvl, "Z146", 8, 1)
+        if emaShort
+            pushWhy(emaF, emaF, "EMA", 6, 1)
+        if asiaShort
+            pushWhy(asiaHi, asiaLo, "Asia", 16, 0)
+        if sqDn
+            pushWhy(sqHigh[1], sqLow[1], "сжатие", sqBars, 0)
+        if dblDn
+            pushWhy(extH, neckH, "двойная вершина", 12, 0)
+        if swRetShort
+            pushWhy(mapSweepLvl, mapSweepLvl, "sweep-ретест", 8, 1)
 
 if barstate.isconfirmed and canFire and rawLong
     entry := close
@@ -743,11 +834,9 @@ if barstate.isconfirmed and canFire and rawLong
         take3 := entry + tp3R * risk
         side := 1
         why := whyL
-        drawCode := drawL
-        dY1 := drawY1L
-        dY2 := drawY2L
         votes := vLong
         lastFire := bar_index
+        snapWhy(1)
 
 if barstate.isconfirmed and canFire and rawShort and side == 0
     entry := close
@@ -759,11 +848,9 @@ if barstate.isconfirmed and canFire and rawShort and side == 0
         take3 := entry - tp3R * risk
         side := -1
         why := whyS
-        drawCode := drawS
-        dY1 := drawY1S
-        dY2 := drawY2S
         votes := vShort
         lastFire := bar_index
+        snapWhy(-1)
 
 var float eMem = na
 var float sMem = na
@@ -772,15 +859,8 @@ var float t2Mem = na
 var float t3Mem = na
 var int sideMem = 0
 var string whyMem = ""
-var int drawMem = 0
-var float d1Mem = na
-var float d2Mem = na
 var int votesMem = 0
 var int bornMem = na
-var int hb2Mem = na
-var float h2Mem = na
-var int lb2Mem = na
-var float l2Mem = na
 
 if side != 0
     eMem := entry
@@ -790,15 +870,8 @@ if side != 0
     t3Mem := take3
     sideMem := side
     whyMem := why
-    drawMem := drawCode
-    d1Mem := dY1
-    d2Mem := dY2
     votesMem := votes
     bornMem := bar_index
-    hb2Mem := hb2
-    h2Mem := h2
-    lb2Mem := lb2
-    l2Mem := l2
 
 haveSig = not na(eMem) and not na(bornMem) and (bar_index - bornMem) <= freshBars
 if haveSig
@@ -809,9 +882,6 @@ if haveSig
     take3 := t3Mem
     side := sideMem
     why := whyMem
-    drawCode := drawMem
-    dY1 := d1Mem
-    dY2 := d2Mem
     votes := votesMem
 else
     eMem := na
@@ -821,9 +891,6 @@ else
     t3Mem := na
     sideMem := 0
     whyMem := ""
-    drawMem := 0
-    d1Mem := na
-    d2Mem := na
     votesMem := 0
     bornMem := na
     entry := na
@@ -833,8 +900,9 @@ else
     take3 := na
     side := 0
     why := ""
-    drawCode := 0
     votes := 0
+    if array.size(whyTopA) > 0
+        clearWhy()
 
 float take = take2  // основной тейк для истории / алертов = TP2
 
@@ -907,13 +975,14 @@ var line lnT1 = na
 var line lnT2 = na
 var line lnT3 = na
 var line lnPath = na
-var line lnWhy = na
-var box bxWhy = na
 var box bxRisk = na
 var box bxTp1 = na
 var box bxTp2 = na
 var box bxTp3 = na
 var array<label> histLabs = array.new_label()
+var array<box> whyBoxes = array.new_box()
+var array<line> whyLines = array.new_line()
+var array<label> whyLabs = array.new_label()
 
 if barstate.islast
     label.delete(lbMain)
@@ -930,8 +999,6 @@ if barstate.islast
     line.delete(lnT2)
     line.delete(lnT3)
     line.delete(lnPath)
-    line.delete(lnWhy)
-    box.delete(bxWhy)
     box.delete(bxRisk)
     box.delete(bxTp1)
     box.delete(bxTp2)
@@ -940,6 +1007,18 @@ if barstate.islast
         for k = 0 to array.size(histLabs) - 1
             label.delete(array.get(histLabs, k))
         array.clear(histLabs)
+    if array.size(whyBoxes) > 0
+        for k = 0 to array.size(whyBoxes) - 1
+            box.delete(array.get(whyBoxes, k))
+        array.clear(whyBoxes)
+    if array.size(whyLines) > 0
+        for k = 0 to array.size(whyLines) - 1
+            line.delete(array.get(whyLines, k))
+        array.clear(whyLines)
+    if array.size(whyLabs) > 0
+        for k = 0 to array.size(whyLabs) - 1
+            label.delete(array.get(whyLabs, k))
+        array.clear(whyLabs)
 
     x2 = bar_index + 10
     if status == "WAIT"
@@ -968,8 +1047,11 @@ if barstate.islast
             bxTp3 := box.new(b0, take2, x2, take3, bgcolor = color.new(#8B5CF6, 90), border_color = color.new(#8B5CF6, 40), border_width = 1, text = "TP3 " + str.tostring(tp3R, "#.#") + "R", text_color = #A78BFA, text_size = size.tiny)
 
         lbMain := label.new(x2, entry, sideTxt + "\nсовпадений: " + str.tostring(votes) + "\nTP2 +" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R · маржа~" + str.tostring(marg2, "#.#") + "%", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
-        lbPos := label.new(b0, side == 1 ? take3 : stop, "ПОЗИЦИЯ\nстоп → TP1 → TP2 → TP3", style = label.style_label_down, color = color.new(#1E2329, 10), textcolor = color.white, size = size.small)
-        lbWhy := label.new(b0, side == 1 ? stop : take3, "ПОЧЕМУ:\n" + why, style = label.style_label_right, color = color.new(#1E2329, 5), textcolor = color.white, size = size.normal)
+        midPos = (entry + take2) / 2.0
+        lbPos := label.new(b0, midPos, "ПОЗИЦИЯ\nстоп → TP1 → TP2 → TP3", style = label.style_label_left, color = color.new(#1E2329, 10), textcolor = color.white, size = size.small)
+        // текст ПОЧЕМУ у первой нарисованной причины (или у входа)
+        whyY = take3
+        lbWhy := label.new(math.max(0, b0 - 2), whyY, "ПОЧЕМУ:\n" + why, style = label.style_label_right, color = color.new(#1E2329, 0), textcolor = color.white, size = size.normal)
 
         lnE := line.new(b0, entry, x2, entry, color = colGo, width = 4)
         lnS := line.new(b0, stop, x2, stop, color = colStop, width = 3, style = line.style_dotted)
@@ -984,18 +1066,25 @@ if barstate.islast
         lbT2 := label.new(x2, take2, "4 ТЕЙК2 " + str.tostring(take2, format.mintick) + " (+" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
         lbT3 := label.new(x2, take3, "5 ТЕЙК3 " + str.tostring(take3, format.mintick) + " (+" + str.tostring(pct3, "#.##") + "% · " + str.tostring(tp3R, "#.#") + "R)", style = label.style_label_left, color = #8B5CF6, textcolor = color.white, size = size.normal)
 
-        // рисунок причины (зона / уровень / трендовая / тень)
-        if drawCode == 5 and side == 1 and not na(hb2Mem) and not na(h2Mem) and not na(dY2)
-            lnWhy := line.new(hb2Mem, h2Mem, b0, dY2, color = color.new(colTp, 10), width = 3)
-        else if drawCode == 5 and side == -1 and not na(lb2Mem) and not na(l2Mem) and not na(dY2)
-            lnWhy := line.new(lb2Mem, l2Mem, b0, dY2, color = color.new(colStop, 10), width = 3)
-        else if (drawCode == 6 or drawCode == 7 or drawCode == 8 or drawCode == 9 or drawCode == 11 or drawCode == 14 or drawCode == 15 or drawCode == 16) and not na(dY1) and not na(dY2) and math.abs(dY1 - dY2) > syminfo.mintick
-            bxWhy := box.new(math.max(b0 - 12, b0 - 25), math.max(dY1, dY2), b0 + 2, math.min(dY1, dY2), bgcolor = color.new(drawCode == 9 ? #8B5CF6 : colWhy, 85), border_color = drawCode == 9 ? #8B5CF6 : colWhy, border_width = 2)
-        else if not na(dY1)
-            y2 = na(dY2) ? dY1 : dY2
-            lnWhy := line.new(b0 - 2, dY1, x2, y2, color = color.new(colWhy, 0), width = 2, style = line.style_dashed)
-            if math.abs(dY1 - y2) <= syminfo.mintick
-                bxWhy := box.new(b0 - 1, dY1 + atr * 0.05, b0 + 1, dY1 - atr * 0.05, bgcolor = color.new(colWhy, 80), border_color = colWhy)
+        // РИСУЕМ КАЖДУЮ причину из ПОЧЕМУ (не только первую)
+        if array.size(whyTopA) > 0
+            for wi = 0 to array.size(whyTopA) - 1
+                wTop = array.get(whyTopA, wi)
+                wBot = array.get(whyBotA, wi)
+                wName = array.get(whyNameA, wi)
+                wLeft = array.get(whyLeftA, wi)
+                wKind = array.get(whyKindA, wi)
+                xL = math.max(b0 - wLeft, b0 - 40)
+                if wKind == 2
+                    array.push(whyLines, line.new(xL, wTop, b0, wBot, color = color.new(colTp, 10), width = 3))
+                    array.push(whyLabs, label.new(xL, wTop, wName, style = label.style_label_right, color = color.new(colWhy, 10), textcolor = color.black, size = size.small))
+                else if wKind == 1 or math.abs(wTop - wBot) <= syminfo.mintick * 2
+                    array.push(whyLines, line.new(xL, wTop, b0 + 2, wTop, color = color.new(colWhy, 0), width = 2, style = line.style_dashed))
+                    array.push(whyLabs, label.new(xL, wTop, wName, style = label.style_label_right, color = color.new(colWhy, 5), textcolor = color.black, size = size.small))
+                else
+                    colBx = wName == "SK Fib" ? #8B5CF6 : wName == "сжатие" or str.contains(wName, "зона") ? colWhy : wName == "Asia" ? #00BCD4 : colWhy
+                    array.push(whyBoxes, box.new(xL, math.max(wTop, wBot), b0 + 1, math.min(wTop, wBot), bgcolor = color.new(colBx, 82), border_color = colBx, border_width = 2, text = wName, text_color = color.black, text_size = size.small))
+                    array.push(whyLabs, label.new(xL, math.max(wTop, wBot), "← " + wName, style = label.style_label_down, color = color.new(colBx, 15), textcolor = color.white, size = size.small))
 
     // последние 3 конфлюенс-итога компактно
     if showHist and array.size(exBi) > 0
