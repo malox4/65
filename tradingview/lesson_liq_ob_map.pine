@@ -1,28 +1,26 @@
 //@version=6
-// Урок 27.02 · простая карта для торговли (без каши IB/растянутых ОБ).
-// Смотри: 1) зелёные цели  2) последний ОБ  3) таблицу «СЕЙЧАС».
-// Вход = ретест ОБ или пробитого уровня. Тейк = жёлтая цель.
-indicator("Урок · Ликв+ОБ карта", overlay = true, max_lines_count = 40, max_boxes_count = 8, max_labels_count = 20)
+// Урок 27.02 · карта без спама: 1 ОБ → 1 сигнал ретеста → линии вход/стоп/тейк.
+indicator("Урок · Ликв+ОБ карта", overlay = true, max_lines_count = 30, max_boxes_count = 4, max_labels_count = 15)
 
 grp = "Торговля"
-swingLen   = input.int(7, "Swing (крупнее = меньше линий)", minval = 3, maxval = 20, group = grp)
-maxLvls    = input.int(6, "Макс. уровней", minval = 2, maxval = 12, group = grp)
-impulseAtr = input.float(1.3, "Импульс для ОБ × ATR", minval = 0.6, step = 0.1, group = grp)
-nearAtr    = input.float(0.6, "«У зоны» если расстояние ≤ ATR×", minval = 0.2, step = 0.1, group = grp)
-showIb     = input.bool(false, "Показывать IB (обычно выкл.)", group = grp)
-showDead   = input.bool(false, "Показывать снятую (красную) ликвидность", group = grp)
-tpRHint    = input.float(2.0, "Подсказка стопа: R к цели", minval = 1.0, step = 0.5, group = grp)
+swingLen   = input.int(7, "Swing", minval = 3, maxval = 20, group = grp)
+maxLvls    = input.int(5, "Макс. зелёных уровней", minval = 2, maxval = 10, group = grp)
+impulseAtr = input.float(1.3, "Импульс ОБ × ATR", minval = 0.6, step = 0.1, group = grp)
+tpR        = input.float(2.0, "Тейк в R (если нет зелёной цели)", minval = 1.0, step = 0.25, group = grp)
+slPadAtr   = input.float(0.15, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
 
 colLive = #0ECB81
 colDead = #F6465D
-colObL  = color.new(#0ECB81, 78)
-colObS  = color.new(#F6465D, 78)
+colObL  = color.new(#0ECB81, 82)
+colObS  = color.new(#F6465D, 82)
 colTgt  = #F0B90B
+colEnt  = #F0B90B
 
 atr = ta.atr(14)
 ph = ta.pivothigh(high, swingLen, swingLen)
 pl = ta.pivotlow(low, swingLen, swingLen)
 
+// ── ликвидность (только живые зелёные) ──────────────────────────────────
 var float[] lvP = array.new_float()
 var int[]   lvK = array.new_int()
 var bool[]  lvD = array.new_bool()
@@ -53,54 +51,16 @@ if n > 0
         p = array.get(lvP, i)
         k = array.get(lvK, i)
         if not array.get(lvD, i)
-            if k == 1 and high >= p
+            if (k == 1 and high >= p) or (k == -1 and low <= p)
                 array.set(lvD, i, true)
-            if k == -1 and low <= p
-                array.set(lvD, i, true)
-        dead = array.get(lvD, i)
         ln = array.get(lvL, i)
-        if dead and not showDead
-            line.set_xy2(ln, array.get(lvB, i), p)  // спрятать: нулевая длина
+        if array.get(lvD, i)
             line.set_color(ln, color.new(colDead, 100))
+            line.set_xy2(ln, array.get(lvB, i), p)
         else
+            line.set_color(ln, colLive)
             line.set_xy2(ln, bar_index + 2, p)
-            line.set_color(ln, dead ? colDead : colLive)
-            line.set_width(ln, dead ? 1 : 2)
 
-// ОБ — фиксированная ширина, НЕ тянем на весь экран
-body = math.abs(close - open)
-bullImp = close > open and body >= impulseAtr * atr and close > high[1]
-bearImp = close < open and body >= impulseAtr * atr and close < low[1]
-obBull = bullImp and close[1] < open[1]
-obBear = bearImp and close[1] > open[1]
-
-var float obTop = na
-var float obBot = na
-var int   obDir = 0
-var int   obBar = na
-var box   obBox = na
-
-if obBull
-    obTop := high[1]
-    obBot := low[1]
-    obDir := 1
-    obBar := bar_index - 1
-if obBear
-    obTop := high[1]
-    obBot := low[1]
-    obDir := -1
-    obBar := bar_index - 1
-
-if barstate.islast
-    box.delete(obBox)
-    if not na(obTop) and not na(obBot) and not na(obBar)
-        bg = obDir == 1 ? colObL : colObS
-        obBox := box.new(obBar, obTop, math.min(bar_index, obBar + 12), obBot, bgcolor = bg, border_color = obDir == 1 ? colLive : colDead, border_width = 2, text = obDir == 1 ? "ОБ лонг · жди ретест" : "ОБ шорт · жди ретест", text_color = color.white, text_size = size.small)
-
-isInside = showIb and high < high[1] and low > low[1]
-plotshape(isInside, title = "IB", style = shape.circle, location = location.abovebar, color = #848E9C, size = size.tiny, text = "IB", textcolor = #848E9C)
-
-// цели
 float tgtUp = na
 float tgtDn = na
 if n > 0
@@ -113,77 +73,151 @@ if n > 0
             if k == -1 and p < close
                 tgtDn := na(tgtDn) ? p : math.max(tgtDn, p)
 
-var line lnUp = na
-var line lnDn = na
-var label lbUp = na
-var label lbDn = na
+// ── один ОБ + одноразовый ретест ────────────────────────────────────────
+body = math.abs(close - open)
+bullImp = close > open and body >= impulseAtr * atr and close > high[1]
+bearImp = close < open and body >= impulseAtr * atr and close < low[1]
+newObLong  = bullImp and close[1] < open[1]
+newObShort = bearImp and close[1] > open[1]
+
+var float obTop = na
+var float obBot = na
+var int   obDir = 0          // 1 long, -1 short
+var int   obBar = na
+var bool  leftZone = false   // цена ушла из ОБ после создания
+var bool  fired = false      // сигнал уже был по этому ОБ
+var float entry = na
+var float stop = na
+var float take = na
+var int   signalBar = na
+
+if newObLong
+    obTop := high[1]
+    obBot := low[1]
+    obDir := 1
+    obBar := bar_index - 1
+    leftZone := false
+    fired := false
+    entry := na
+    stop := na
+    take := na
+    signalBar := na
+
+if newObShort
+    obTop := high[1]
+    obBot := low[1]
+    obDir := -1
+    obBar := bar_index - 1
+    leftZone := false
+    fired := false
+    entry := na
+    stop := na
+    take := na
+    signalBar := na
+
+inOb = not na(obTop) and low <= obTop and high >= obBot
+
+if not na(obTop) and not fired
+    // сначала должны ВЫЙТИ из зоны импульсом
+    if obDir == 1 and close > obTop
+        leftZone := true
+    if obDir == -1 and close < obBot
+        leftZone := true
+
+    // один ретест: вернулись в зону ПОСЛЕ ухода
+    touchLong = leftZone and obDir == 1 and low <= obTop and close >= obBot
+    touchShort = leftZone and obDir == -1 and high >= obBot and close <= obTop
+
+    if touchLong
+        fired := true
+        signalBar := bar_index
+        entry := math.min(close, obTop)
+        stop := obBot - slPadAtr * atr
+        risk = entry - stop
+        if risk <= 0
+            risk := atr
+        take := na(tgtUp) ? entry + tpR * risk : tgtUp
+
+    if touchShort
+        fired := true
+        signalBar := bar_index
+        entry := math.max(close, obBot)
+        stop := obTop + slPadAtr * atr
+        risk = stop - entry
+        if risk <= 0
+            risk := atr
+        take := na(tgtDn) ? entry - tpR * risk : tgtDn
+
+// одноразовые метки только на баре сигнала
+sigLong = fired and signalBar == bar_index and obDir == 1
+sigShort = fired and signalBar == bar_index and obDir == -1
+
+plotshape(sigLong, title = "Лонг 1 раз", style = shape.triangleup, location = location.belowbar, color = colLive, size = size.normal, text = "ВХОД ЛОНГ", textcolor = colLive)
+plotshape(sigShort, title = "Шорт 1 раз", style = shape.triangledown, location = location.abovebar, color = colDead, size = size.normal, text = "ВХОД ШОРТ", textcolor = colDead)
+
+// ── рисунок только на last ──────────────────────────────────────────────
+var box bxOb = na
+var line lnEnt = na
+var line lnSl = na
+var line lnTp = na
+var line lnTgtU = na
+var line lnTgtD = na
+var label lbOb = na
+var label lbEnt = na
+var label lbSl = na
+var label lbTp = na
+
 if barstate.islast
-    line.delete(lnUp)
-    line.delete(lnDn)
-    label.delete(lbUp)
-    label.delete(lbDn)
-    if not na(tgtUp)
-        lnUp := line.new(bar_index - 3, tgtUp, bar_index + 12, tgtUp, color = colTgt, width = 2)
-        lbUp := label.new(bar_index + 12, tgtUp, "ТЕЙК ↑", style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.normal)
-    if not na(tgtDn)
-        lnDn := line.new(bar_index - 3, tgtDn, bar_index + 12, tgtDn, color = colTgt, width = 2)
-        lbDn := label.new(bar_index + 12, tgtDn, "ТЕЙК ↓", style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.normal)
+    box.delete(bxOb)
+    line.delete(lnEnt)
+    line.delete(lnSl)
+    line.delete(lnTp)
+    line.delete(lnTgtU)
+    line.delete(lnTgtD)
+    label.delete(lbOb)
+    label.delete(lbEnt)
+    label.delete(lbSl)
+    label.delete(lbTp)
 
-// что делать СЕЙЧАС
-nearOb = not na(obTop) and low <= obTop + nearAtr * atr and high >= obBot - nearAtr * atr
-retestLong = obDir == 1 and nearOb and close >= obBot
-retestShort = obDir == -1 and nearOb and close <= obTop
+    if not na(obTop) and not na(obBar)
+        bg = obDir == 1 ? colObL : colObS
+        right = fired and not na(signalBar) ? math.max(signalBar + 2, bar_index) : bar_index + 2
+        bxOb := box.new(obBar, obTop, right, obBot, bgcolor = bg, border_color = obDir == 1 ? colLive : colDead, border_width = 2)
+        st = not leftZone ? "ОБ создан · жди уход цены" : not fired ? "ЖДИ РЕТЕСТ в бокс" : "Сигнал уже был"
+        lbOb := label.new(obBar, obDir == 1 ? obBot : obTop, (obDir == 1 ? "ОБ↑ " : "ОБ↓ ") + st, style = obDir == 1 ? label.style_label_up : label.style_label_down, color = color.new(obDir == 1 ? colLive : colDead, 15), textcolor = color.white, size = size.small)
 
-string action = "ЖДИ: новый ОБ или подход к зелёной линии"
-string side = "—"
-float planEntry = na
-float planStop = na
-float planTp = na
+    if fired and not na(entry) and not na(stop) and not na(take) and not na(signalBar)
+        x2 = bar_index + 10
+        lnEnt := line.new(signalBar, entry, x2, entry, color = colEnt, width = 2)
+        lnSl := line.new(signalBar, stop, x2, stop, color = colDead, width = 2, style = line.style_dotted)
+        lnTp := line.new(signalBar, take, x2, take, color = colTgt, width = 2, style = line.style_dotted)
+        lbEnt := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = color.new(colEnt, 10), textcolor = color.black, size = size.small)
+        lbSl := label.new(x2, stop, "СТОП", style = label.style_label_left, color = color.new(colDead, 10), textcolor = color.white, size = size.small)
+        lbTp := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.small)
+    else
+        if not na(tgtUp)
+            lnTgtU := line.new(bar_index - 2, tgtUp, bar_index + 10, tgtUp, color = colTgt, width = 1, style = line.style_dashed)
+        if not na(tgtDn)
+            lnTgtD := line.new(bar_index - 2, tgtDn, bar_index + 10, tgtDn, color = colTgt, width = 1, style = line.style_dashed)
 
-if retestLong
-    action := "МОЖНО ЛОНГ: ретест ОБ↑"
-    side := "ЛОНГ"
-    planEntry := (obTop + obBot) / 2
-    planStop := obBot - 0.15 * atr
-    planTp := na(tgtUp) ? planEntry + tpRHint * (planEntry - planStop) : tgtUp
-else if retestShort
-    action := "МОЖНО ШОРТ: ретест ОБ↓"
-    side := "ШОРТ"
-    planEntry := (obTop + obBot) / 2
-    planStop := obTop + 0.15 * atr
-    planTp := na(tgtDn) ? planEntry - tpRHint * (planStop - planEntry) : tgtDn
-else if not na(obTop) and obDir == 1 and close > obTop
-    action := "ЖДИ РЕТЕСТ ОБ↑ сверху вниз к синей/зелёной зоне"
-    side := "ЛОНГ-план"
-else if not na(obTop) and obDir == -1 and close < obBot
-    action := "ЖДИ РЕТЕСТ ОБ↓ снизу вверх к зоне"
-    side := "ШОРТ-план"
-else if not na(tgtUp) and math.abs(close - tgtUp) <= nearAtr * atr
-    action := "У верхней зелёной: либо свип/отбой, либо жди пробой и ретест"
-    side := "у цели ↑"
-else if not na(tgtDn) and math.abs(close - tgtDn) <= nearAtr * atr
-    action := "У нижней зелёной: либо свип/отбой, либо жди пробой и ретест"
-    side := "у цели ↓"
+string nowTxt = "нет ОБ · жди импульс"
+if not na(obTop)
+    nowTxt := not leftZone ? "есть ОБ · жди уход из бокса" : not fired ? "жди РЕТЕСТ в бокс (не входи раньше)" : "вход уже отмечен · смотри линии ВХОД/СТОП/ТЕЙК"
 
-plotshape(retestLong, title = "Лонг", style = shape.triangleup, location = location.belowbar, color = colLive, size = size.normal, text = "ВХОД ЛОНГ", textcolor = colLive)
-plotshape(retestShort, title = "Шорт", style = shape.triangledown, location = location.abovebar, color = colDead, size = size.normal, text = "ВХОД ШОРТ", textcolor = colDead)
-
-var table t = table.new(position.bottom_right, 2, 7, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.bottom_right, 2, 6, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
 if barstate.islast
     table.cell(t, 0, 0, "СЕЙЧАС", text_color = #F0B90B, text_size = size.normal)
-    table.cell(t, 1, 0, side, text_color = color.white, text_size = size.normal)
-    table.cell(t, 0, 1, "Действие", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 1, action, text_color = #F0B90B, text_size = size.small)
+    table.cell(t, 1, 0, obDir == 0 ? "—" : obDir == 1 ? "ЛОНГ-план" : "ШОРТ-план", text_color = color.white, text_size = size.normal)
+    table.cell(t, 0, 1, "Что делать", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 1, nowTxt, text_color = #F0B90B, text_size = size.small)
     table.cell(t, 0, 2, "Вход", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 2, na(planEntry) ? "—" : str.tostring(planEntry, format.mintick), text_color = colLive, text_size = size.tiny)
+    table.cell(t, 1, 2, na(entry) ? "—" : str.tostring(entry, format.mintick), text_color = colEnt, text_size = size.tiny)
     table.cell(t, 0, 3, "Стоп", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 3, na(planStop) ? "—" : str.tostring(planStop, format.mintick), text_color = colDead, text_size = size.tiny)
+    table.cell(t, 1, 3, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colDead, text_size = size.tiny)
     table.cell(t, 0, 4, "Тейк", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 4, na(planTp) ? (na(tgtUp) and na(tgtDn) ? "—" : "жёлтая линия") : str.tostring(planTp, format.mintick), text_color = colTgt, text_size = size.tiny)
+    table.cell(t, 1, 4, na(take) ? "—" : str.tostring(take, format.mintick), text_color = colTgt, text_size = size.tiny)
     table.cell(t, 0, 5, "Правило", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 5, "Не гонись за импульсом · только ретест зоны", text_color = color.white, text_size = size.tiny)
-    table.cell(t, 0, 6, "IB", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 6, showIb ? "вкл (шумит)" : "выкл", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, "1 ОБ = 1 вход · только после ухода и возврата", text_color = color.white, text_size = size.tiny)
 
-alertcondition(retestLong, "Вход лонг ОБ", "Ретест бычьего ОБ")
-alertcondition(retestShort, "Вход шорт ОБ", "Ретест медвежьего ОБ")
+alertcondition(sigLong, "Вход лонг 1 раз", "Ретест ОБ↑")
+alertcondition(sigShort, "Вход шорт 1 раз", "Ретест ОБ↓")
