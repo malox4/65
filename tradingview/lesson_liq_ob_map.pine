@@ -160,40 +160,53 @@ var box bxOb = na
 var line lnEnt = na
 var line lnSl = na
 var line lnTp = na
+var line lnPath = na
 var line lnTgtU = na
 var line lnTgtD = na
 var label lbOb = na
 var label lbEnt = na
 var label lbSl = na
 var label lbTp = na
+var label lbWhy = na
+var label lbDir = na
 
 if barstate.islast
     box.delete(bxOb)
     line.delete(lnEnt)
     line.delete(lnSl)
     line.delete(lnTp)
+    line.delete(lnPath)
     line.delete(lnTgtU)
     line.delete(lnTgtD)
     label.delete(lbOb)
     label.delete(lbEnt)
     label.delete(lbSl)
     label.delete(lbTp)
+    label.delete(lbWhy)
+    label.delete(lbDir)
 
     if not na(obTop) and not na(obBar)
         bg = obDir == 1 ? colObL : colObS
         right = fired and not na(signalBar) ? math.max(signalBar + 2, bar_index) : bar_index + 2
         bxOb := box.new(obBar, obTop, right, obBot, bgcolor = bg, border_color = obDir == 1 ? colLive : colDead, border_width = 2)
-        st = not leftZone ? "ОБ создан · жди уход цены" : not fired ? "ЖДИ РЕТЕСТ в бокс" : "Сигнал уже был"
+        st = not leftZone ? "создан · жди уход" : not fired ? "ЖДИ РЕТЕСТ" : "ретест пойман"
         lbOb := label.new(obBar, obDir == 1 ? obBot : obTop, (obDir == 1 ? "ОБ↑ " : "ОБ↓ ") + st, style = obDir == 1 ? label.style_label_up : label.style_label_down, color = color.new(obDir == 1 ? colLive : colDead, 15), textcolor = color.white, size = size.small)
 
     if fired and not na(entry) and not na(stop) and not na(take) and not na(signalBar)
-        x2 = bar_index + 10
+        x2 = bar_index + 12
+        midX = int(math.round((signalBar + x2) / 2))
         lnEnt := line.new(signalBar, entry, x2, entry, color = colEnt, width = 2)
         lnSl := line.new(signalBar, stop, x2, stop, color = colDead, width = 2, style = line.style_dotted)
         lnTp := line.new(signalBar, take, x2, take, color = colTgt, width = 2, style = line.style_dotted)
-        lbEnt := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = color.new(colEnt, 10), textcolor = color.black, size = size.small)
-        lbSl := label.new(x2, stop, "СТОП", style = label.style_label_left, color = color.new(colDead, 10), textcolor = color.white, size = size.small)
-        lbTp := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.small)
+        // стрелка «откуда → куда» (вход → тейк)
+        lnPath := line.new(signalBar, entry, x2, take, color = obDir == 1 ? colLive : colDead, width = 3)
+        lbEnt := label.new(x2, entry, "1. ВХОД", style = label.style_label_left, color = color.new(colEnt, 10), textcolor = color.black, size = size.normal)
+        lbSl := label.new(x2, stop, "СТОП (если против)", style = label.style_label_left, color = color.new(colDead, 10), textcolor = color.white, size = size.small)
+        lbTp := label.new(x2, take, "2. ТЕЙК (сюда)", style = label.style_label_left, color = color.new(colTgt, 10), textcolor = color.black, size = size.normal)
+        why = obDir == 1 ? "ПОЧЕМУ ЛОНГ:\n1) был импульс вверх → ОБ↑\n2) цена ушла из бокса\n3) вернулась (ретест)\n4) ждём рост к ТЕЙК" : "ПОЧЕМУ ШОРТ:\n1) был импульс вниз → ОБ↓\n2) цена ушла из бокса\n3) вернулась (ретест)\n4) ждём падение к ТЕЙК"
+        lbWhy := label.new(signalBar, obDir == 1 ? stop : take, why, style = label.style_label_right, color = color.new(#1E2329, 5), textcolor = color.white, size = size.normal)
+        dirTxt = obDir == 1 ? "НАПРАВЛЕНИЕ: ВХОД ➜ ВВЕРХ ➜ ТЕЙК\n(лонг, стоп ниже входа)" : "НАПРАВЛЕНИЕ: ВХОД ➜ ВНИЗ ➜ ТЕЙК\n(шорт, стоп выше входа)"
+        lbDir := label.new(midX, (entry + take) / 2, dirTxt, style = label.style_label_center, color = color.new(obDir == 1 ? colLive : colDead, 20), textcolor = color.white, size = size.normal)
     else
         if not na(tgtUp)
             lnTgtU := line.new(bar_index - 2, tgtUp, bar_index + 10, tgtUp, color = colTgt, width = 1, style = line.style_dashed)
@@ -201,23 +214,32 @@ if barstate.islast
             lnTgtD := line.new(bar_index - 2, tgtDn, bar_index + 10, tgtDn, color = colTgt, width = 1, style = line.style_dashed)
 
 string nowTxt = "нет ОБ · жди импульс"
+string routeTxt = "—"
+string whyTxt = "—"
 if not na(obTop)
-    nowTxt := not leftZone ? "есть ОБ · жди уход из бокса" : not fired ? "жди РЕТЕСТ в бокс (не входи раньше)" : "вход уже отмечен · смотри линии ВХОД/СТОП/ТЕЙК"
+    nowTxt := not leftZone ? "есть ОБ · жди уход из бокса" : not fired ? "жди РЕТЕСТ в бокс" : "позиция размечена"
+    if fired
+        routeTxt := obDir == 1 ? "ЛОНГ: вход → вверх → тейк" : "ШОРТ: вход → вниз → тейк"
+        whyTxt := "ретест ОБ после импульса"
 
-var table t = table.new(position.bottom_right, 2, 6, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.bottom_right, 2, 8, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    table.cell(t, 0, 0, "СЕЙЧАС", text_color = #F0B90B, text_size = size.normal)
-    table.cell(t, 1, 0, obDir == 0 ? "—" : obDir == 1 ? "ЛОНГ-план" : "ШОРТ-план", text_color = color.white, text_size = size.normal)
-    table.cell(t, 0, 1, "Что делать", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 1, nowTxt, text_color = #F0B90B, text_size = size.small)
-    table.cell(t, 0, 2, "Вход", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 2, na(entry) ? "—" : str.tostring(entry, format.mintick), text_color = colEnt, text_size = size.tiny)
-    table.cell(t, 0, 3, "Стоп", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 3, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colDead, text_size = size.tiny)
-    table.cell(t, 0, 4, "Тейк", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 4, na(take) ? "—" : str.tostring(take, format.mintick), text_color = colTgt, text_size = size.tiny)
-    table.cell(t, 0, 5, "Правило", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 1, 5, "1 ОБ = 1 вход · только после ухода и возврата", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 0, "ОБЪЯСНЕНИЕ", text_color = #F0B90B, text_size = size.normal)
+    table.cell(t, 1, 0, obDir == 0 ? "—" : obDir == 1 ? "ЛОНГ" : "ШОРТ", text_color = obDir == 1 ? colLive : colDead, text_size = size.normal)
+    table.cell(t, 0, 1, "Откуда→куда", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 1, routeTxt, text_color = #F0B90B, text_size = size.small)
+    table.cell(t, 0, 2, "Почему", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 2, whyTxt, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "Сейчас", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 3, nowTxt, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "1. Вход", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 4, na(entry) ? "—" : str.tostring(entry, format.mintick), text_color = colEnt, text_size = size.tiny)
+    table.cell(t, 0, 5, "Стоп", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colDead, text_size = size.tiny)
+    table.cell(t, 0, 6, "2. Тейк", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 6, na(take) ? "—" : str.tostring(take, format.mintick), text_color = colTgt, text_size = size.tiny)
+    table.cell(t, 0, 7, "Читай", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 7, "зелёная линия = путь к тейку; красный пунктир = стоп", text_color = color.white, text_size = size.tiny)
 
 alertcondition(sigLong, "Вход лонг 1 раз", "Ретест ОБ↑")
 alertcondition(sigShort, "Вход шорт 1 раз", "Ретест ОБ↓")
