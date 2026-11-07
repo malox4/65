@@ -46,10 +46,14 @@ pl = ta.pivotlow(low, swingLen, swingLen)
 bullEng = close > open and close > high[1] and open <= low[1]
 bearEng = close < open and close < low[1] and open >= high[1]
 
-// POC прокси: close бара с max volume на старшем ТФ
-pocH4 = showPocH4 ? request.security(syminfo.tickerid, "240", close[ta.highestbars(volume, pocLookH4)], lookahead = barmerge.lookahead_off) : na
-pocD1 = showPocD1 ? request.security(syminfo.tickerid, "D", close[ta.highestbars(volume, pocLookD1)], lookahead = barmerge.lookahead_off) : na
-pocW1 = showPocW1 ? request.security(syminfo.tickerid, "W", close[ta.highestbars(volume, pocLookW1)], lookahead = barmerge.lookahead_off) : na
+// POC прокси: close бара с max volume на старшем ТФ (без close[offset] — RE10008)
+f_poc(int look) =>
+    hv = ta.highest(volume, look)
+    ta.valuewhen(volume == hv, close, 0)
+
+pocH4 = showPocH4 ? request.security(syminfo.tickerid, "240", f_poc(pocLookH4), lookahead = barmerge.lookahead_off) : na
+pocD1 = showPocD1 ? request.security(syminfo.tickerid, "D", f_poc(pocLookD1), lookahead = barmerge.lookahead_off) : na
+pocW1 = showPocW1 ? request.security(syminfo.tickerid, "W", f_poc(pocLookW1), lookahead = barmerge.lookahead_off) : na
 
 var float zMid = na
 var float zTop = na
