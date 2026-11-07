@@ -1,0 +1,191 @@
+//@version=6
+// Урок 03.03.2023 · DeltaRiver кластеры / «пользовательский фильтр объёмов»
+// Как в DeltaRiver: дельта покупок в верхней тени, дельта продаж в нижней тени,
+// Cumulative Delta Day, POC бара, снятие ликвидности + всплеск объёма.
+// На TV нет тикового footprint — дельта и «кластер в тени» считаются через LTF (request.security_lower_tf).
+// Индикатор для отслеживания, не сигнал бота.
+indicator("Урок · Кластеры DeltaRiver", overlay = true, max_boxes_count = 80, max_labels_count = 80, max_lines_count = 40)
+
+// ── inputs ──────────────────────────────────────────────────────────────
+grpFil = "Фильтр объёмов (как в DeltaRiver)"
+buyDeltaMin  = input.float(400000, "Покупки дельта ≥ (верхняя тень)", minval = 0, group = grpFil, tooltip = "На ADA в уроке ~400k–600k. На LINK/MATIC порог меньше — подстрой под монету.")
+sellDeltaMin = input.float(500000, "Продажи дельта ≥ (нижняя тень)", minval = 0, group = grpFil, tooltip = "На ADA в уроке ~500k–70k в разных правках; подстрой.")
+totalVolMin  = input.float(0, "Общий объём в тени ≥ (0=выкл)", minval = 0, group = grpFil)
+onlyBearBuy  = input.bool(true, "Buy-delta в верхней тени только на медвежьей свече", group = grpFil, tooltip = "Как в опциях: тип бара «Медвежий» для покупок в верхней тени (absorption).")
+onlyBullSell = input.bool(true, "Sell-delta в нижней тени только на бычьей свече", group = grpFil)
+ltf          = input.timeframe("1", "LTF для дельты/кластера", group = grpFil, tooltip = "1m на M15/H1. Чем мельче LTF, тем точнее прокси footprint.")
+
+grpSig = "Сигналы / ликвидность"
+useSweep   = input.bool(true, "Снятие ликвидности (sweep)", group = grpSig)
+swingLen   = input.int(5, "Swing для sweep", minval = 2, maxval = 20, group = grpSig)
+needVolX   = input.float(1.8, "Объём ≥ SMA ×", minval = 1.0, step = 0.1, group = grpSig)
+volSmaLen  = input.int(20, "SMA объёма", group = grpSig)
+useCci     = input.bool(false, "Фильтр CCI(20)", group = grpSig)
+cciLim     = input.float(100, "CCI порог", group = grpSig)
+markZone   = input.bool(true, "Бокс зоны на сигнале", group = grpSig)
+zoneBars   = input.int(12, "Ширина бокса (свечей вправо)", minval = 2, maxval = 40, group = grpSig)
+
+grpVis = "Вид"
+showPoc    = input.bool(true, "POC бара (макс объём LTF)", group = grpVis)
+showCvd    = input.bool(true, "CVD day (линия)", group = grpVis)
+showTable  = input.bool(true, "Таблица", group = grpVis)
+colBuy     = input.color(#0ECB81, "Buy delta / верх", group = grpVis)
+colSell    = input.color(#F6465D, "Sell delta / низ", group = grpVis)
+colPoc     = input.color(#F0B90B, "POC", group = grpVis)
+colZoneBuy = input.color(color.new(#0ECB81, 85), "Зона лонг", group = grpVis)
+colZoneSell= input.color(color.new(#F6465D, 85), "Зона шорт", group = grpVis)
+
+// ── LTF volume split (прокси bid/ask) ───────────────────────────────────
+ltfO = request.security_lower_tf(syminfo.tickerid, ltf, open)
+ltfH = request.security_lower_tf(syminfo.tickerid, ltf, high)
+ltfL = request.security_lower_tf(syminfo.tickerid, ltf, low)
+ltfC = request.security_lower_tf(syminfo.tickerid, ltf, close)
+ltfV = request.security_lower_tf(syminfo.tickerid, ltf, volume)
+
+f_split(o, h, l, c, v) =>
+    rng = h - l
+    buy = na
+    sell = na
+    if na(v) or v <= 0
+        buy := 0.0
+        sell := 0.0
+    else if rng <= 0 or na(rng)
+        buy := c >= o ? v : 0.0
+        sell := c < o ? v : 0.0
+    else
+        // классика: доля пути close внутри бара
+        buy := v * (c - l) / rng
+        sell := v * (h - c) / rng
+    [buy, sell]
+
+n = array.size(ltfC)
+var float buyUp = 0.0
+var float sellUp = 0.0
+var float buyLo = 0.0
+var float sellLo = 0.0
+var float buyAll = 0.0
+var float sellAll = 0.0
+var float pocPrice = na
+var float pocVol = 0.0
+
+buyUp := 0.0
+sellUp := 0.0
+buyLo := 0.0
+sellLo := 0.0
+buyAll := 0.0
+sellAll := 0.0
+pocPrice := na
+pocVol := 0.0
+
+mid = (high + low) / 2.0
+if n > 0
+    for i = 0 to n - 1
+        o = array.get(ltfO, i)
+        h = array.get(ltfH, i)
+        l = array.get(ltfL, i)
+        c = array.get(ltfC, i)
+        v = array.get(ltfV, i)
+        [b, s] = f_split(o, h, l, c, v)
+        buyAll += b
+        sellAll += s
+        px = (h + l) / 2.0
+        if not na(v) and v >= pocVol
+            pocVol := v
+            pocPrice := px
+        // верхняя / нижняя половина HTF-бара
+        if px >= mid
+            buyUp += b
+            sellUp += s
+        if px <= mid
+            buyLo += b
+            sellLo += s
+
+deltaAll = buyAll - sellAll
+volAll = buyAll + sellAll
+deltaUp = buyUp - sellUp
+deltaLo = buyLo - sellLo
+
+// ── CVD day ─────────────────────────────────────────────────────────────
+newDay = ta.change(time("D")) != 0
+var float cvd = 0.0
+cvd := newDay ? deltaAll : nz(cvd[1]) + deltaAll
+
+// ── filters as in lesson ────────────────────────────────────────────────
+isBear = close < open
+isBull = close > open
+volSma = ta.sma(volume, volSmaLen)
+volOk = volume >= volSma * needVolX
+
+buyInUpperWick = buyUp >= buyDeltaMin and (totalVolMin <= 0 or (buyUp + sellUp) >= totalVolMin) and (not onlyBearBuy or isBear)
+sellInLowerWick = sellLo >= sellDeltaMin and (totalVolMin <= 0 or (buyLo + sellLo) >= totalVolMin) and (not onlyBullSell or isBull)
+
+swingLo = ta.lowest(low, swingLen)[1]
+swingHi = ta.highest(high, swingLen)[1]
+sweepLow = useSweep and low < swingLo and close > swingLo
+sweepHigh = useSweep and high > swingHi and close < swingHi
+
+cci = ta.cci(hlc3, 20)
+cciLongOk = not useCci or cci < -cciLim or cci < cciLim
+cciShortOk = not useCci or cci > cciLim or cci > -cciLim
+
+// Лонг-идея урока: sell climax / absorption в нижней тени + (часто) sweep низа + объём
+longSig = sellInLowerWick and (not useSweep or sweepLow or low <= swingLo) and volOk and cciLongOk
+// Шорт-идея: buy climax / absorption в верхней тени на медвежьей + sweep верха
+shortSig = buyInUpperWick and (not useSweep or sweepHigh or high >= swingHi) and volOk and cciShortOk
+
+plotshape(buyInUpperWick, title = "BuyΔ верхняя тень", style = shape.square, location = location.abovebar, color = colBuy, size = size.tiny)
+plotshape(sellInLowerWick, title = "SellΔ нижняя тень", style = shape.square, location = location.belowbar, color = colSell, size = size.tiny)
+plotshape(longSig, title = "Сигнал лонг", style = shape.triangleup, location = location.belowbar, color = colBuy, size = size.small)
+plotshape(shortSig, title = "Сигнал шорт", style = shape.triangledown, location = location.abovebar, color = colSell, size = size.small)
+
+plot(showPoc ? pocPrice : na, "POC бара", color = colPoc, style = plot.style_circles, linewidth = 2)
+plot(showCvd ? cvd : na, "CVD Day", color = color.new(#9B59B6, 0), display = display.pane, linewidth = 2)
+
+bgcolor(longSig ? color.new(colBuy, 90) : shortSig ? color.new(colSell, 90) : na)
+
+// зоны интереса на сигнале (как жёлтый бокс у экстремума)
+var box[] zones = array.new_box()
+pushZone(isLong) =>
+    top = isLong ? math.max(open, close) : high
+    bot = isLong ? low : math.min(open, close)
+    bg = isLong ? colZoneBuy : colZoneSell
+    b = box.new(bar_index, top, bar_index + zoneBars, bot, border_color = color.new(bg, 0), bgcolor = bg, border_width = 1, text = isLong ? "SellΔ низ / лонг" : "BuyΔ верх / шорт", text_color = color.white, text_size = size.tiny)
+    array.push(zones, b)
+    if array.size(zones) > 20
+        box.delete(array.shift(zones))
+
+if markZone and longSig
+    pushZone(true)
+if markZone and shortSig
+    pushZone(false)
+
+if array.size(zones) > 0
+    for i = 0 to array.size(zones) - 1
+        box.set_right(array.get(zones, i), math.max(box.get_right(array.get(zones, i)), bar_index))
+
+// ── table ───────────────────────────────────────────────────────────────
+var table t = table.new(position.bottom_right, 2, 9, bgcolor = color.new(#0B0E11, 15), border_width = 1, border_color = #2B3139)
+if showTable and barstate.islast
+    table.cell(t, 0, 0, "КЛАСТЕРЫ M15", text_color = #F0B90B, text_size = size.small)
+    table.cell(t, 1, 0, syminfo.ticker, text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, "BuyΔ верх", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 1, str.tostring(buyUp, format.volume), text_color = colBuy, text_size = size.tiny)
+    table.cell(t, 0, 2, "SellΔ низ", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 2, str.tostring(sellLo, format.volume), text_color = colSell, text_size = size.tiny)
+    table.cell(t, 0, 3, "Δ бара", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 3, str.tostring(deltaAll, format.volume), text_color = deltaAll >= 0 ? colBuy : colSell, text_size = size.tiny)
+    table.cell(t, 0, 4, "CVD day", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 4, str.tostring(cvd, format.volume), text_color = #9B59B6, text_size = size.tiny)
+    table.cell(t, 0, 5, "POC", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, na(pocPrice) ? "—" : str.tostring(pocPrice, format.mintick), text_color = colPoc, text_size = size.tiny)
+    table.cell(t, 0, 6, "Vol / SMA", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 6, str.tostring(volume / volSma, "#.##") + "x", text_color = volOk ? colBuy : #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 7, "Фильтр ↑", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 7, buyInUpperWick ? "ДА BuyΔ тень" : "нет", text_color = buyInUpperWick ? colBuy : #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 8, "Фильтр ↓", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 8, sellInLowerWick ? "ДА SellΔ тень" : "нет", text_color = sellInLowerWick ? colSell : #848E9C, text_size = size.tiny)
+
+alertcondition(longSig, "Cluster long (SellΔ lower wick)", "Sell delta в нижней тени + объём/sweep → лонг-идея")
+alertcondition(shortSig, "Cluster short (BuyΔ upper wick)", "Buy delta в верхней тени + объём/sweep → шорт-идея")
+alertcondition(buyInUpperWick, "BuyΔ upper wick", "Покупки дельта в верхней тени")
+alertcondition(sellInLowerWick, "SellΔ lower wick", "Продажи дельта в нижней тени")
