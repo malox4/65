@@ -1,6 +1,6 @@
 //@version=6
 // Урок 27.02 · карта без спама: 1 ОБ → 1 сигнал ретеста → линии вход/стоп/тейк.
-indicator("Урок · Ликв+ОБ карта", overlay = true, max_lines_count = 30, max_boxes_count = 4, max_labels_count = 15)
+indicator("Урок · Ликв+ОБ карта", overlay = true, max_lines_count = 30, max_boxes_count = 4, max_labels_count = 40)
 
 grp = "Торговля"
 swingLen   = input.int(7, "Swing", minval = 3, maxval = 20, group = grp)
@@ -26,6 +26,7 @@ var int[]   lvK = array.new_int()
 var bool[]  lvD = array.new_bool()
 var int[]   lvB = array.new_int()
 var line[]  lvL = array.new_line()
+var label[] lvName = array.new_label()
 
 pushLvl(price, kind) =>
     array.push(lvP, price)
@@ -33,8 +34,11 @@ pushLvl(price, kind) =>
     array.push(lvD, false)
     array.push(lvB, bar_index - swingLen)
     array.push(lvL, line.new(bar_index - swingLen, price, bar_index + 1, price, color = colLive, width = 2, style = line.style_dashed))
+    nm = kind == 1 ? "ликв. ХАЙ · не снята" : "ликв. ЛОЙ · не снята"
+    array.push(lvName, label.new(bar_index + 1, price, nm, style = label.style_label_left, color = color.new(colLive, 25), textcolor = color.white, size = size.tiny))
     while array.size(lvP) > maxLvls
         line.delete(array.shift(lvL))
+        label.delete(array.shift(lvName))
         array.shift(lvP)
         array.shift(lvK)
         array.shift(lvD)
@@ -54,12 +58,19 @@ if n > 0
             if (k == 1 and high >= p) or (k == -1 and low <= p)
                 array.set(lvD, i, true)
         ln = array.get(lvL, i)
+        lb = array.get(lvName, i)
         if array.get(lvD, i)
             line.set_color(ln, color.new(colDead, 100))
             line.set_xy2(ln, array.get(lvB, i), p)
+            label.set_text(lb, array.get(lvK, i) == 1 ? "ликв. ХАЙ · снята" : "ликв. ЛОЙ · снята")
+            label.set_color(lb, color.new(colDead, 70))
+            label.set_xy(lb, array.get(lvB, i), p)
         else
             line.set_color(ln, colLive)
             line.set_xy2(ln, bar_index + 2, p)
+            label.set_text(lb, array.get(lvK, i) == 1 ? "ликв. ХАЙ · не снята" : "ликв. ЛОЙ · не снята")
+            label.set_color(lb, color.new(colLive, 25))
+            label.set_xy(lb, bar_index + 2, p)
 
 float tgtUp = na
 float tgtDn = na
@@ -169,6 +180,7 @@ var label lbSl = na
 var label lbTp = na
 var label lbWhy = na
 var label lbDir = na
+var label lbDeal = na
 
 if barstate.islast
     box.delete(bxOb)
@@ -184,6 +196,7 @@ if barstate.islast
     label.delete(lbTp)
     label.delete(lbWhy)
     label.delete(lbDir)
+    label.delete(lbDeal)
 
     if not na(obTop) and not na(obBar)
         bg = obDir == 1 ? colObL : colObS
@@ -195,10 +208,11 @@ if barstate.islast
     if fired and not na(entry) and not na(stop) and not na(take) and not na(signalBar)
         x2 = bar_index + 12
         midX = int(math.round((signalBar + x2) / 2))
+        dealName = obDir == 1 ? "СДЕЛКА: ЛОНГ · ретест ОБ↑" : "СДЕЛКА: ШОРТ · ретест ОБ↓"
+        lbDeal := label.new(signalBar, math.max(entry, take) + atr * 0.4, dealName, style = label.style_label_down, color = color.new(#F0B90B, 5), textcolor = color.black, size = size.large)
         lnEnt := line.new(signalBar, entry, x2, entry, color = colEnt, width = 2)
         lnSl := line.new(signalBar, stop, x2, stop, color = colDead, width = 2, style = line.style_dotted)
         lnTp := line.new(signalBar, take, x2, take, color = colTgt, width = 2, style = line.style_dotted)
-        // стрелка «откуда → куда» (вход → тейк)
         lnPath := line.new(signalBar, entry, x2, take, color = obDir == 1 ? colLive : colDead, width = 3)
         lbEnt := label.new(x2, entry, "1. ВХОД", style = label.style_label_left, color = color.new(colEnt, 10), textcolor = color.black, size = size.normal)
         lbSl := label.new(x2, stop, "СТОП (если против)", style = label.style_label_left, color = color.new(colDead, 10), textcolor = color.white, size = size.small)
@@ -224,8 +238,9 @@ if not na(obTop)
 
 var table t = table.new(position.bottom_right, 2, 8, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    table.cell(t, 0, 0, "ОБЪЯСНЕНИЕ", text_color = #F0B90B, text_size = size.normal)
-    table.cell(t, 1, 0, obDir == 0 ? "—" : obDir == 1 ? "ЛОНГ" : "ШОРТ", text_color = obDir == 1 ? colLive : colDead, text_size = size.normal)
+    dealShort = fired ? (obDir == 1 ? "ЛОНГ · ретест ОБ↑" : "ШОРТ · ретест ОБ↓") : (obDir == 0 ? "—" : obDir == 1 ? "ЛОНГ-план" : "ШОРТ-план")
+    table.cell(t, 0, 0, "НАЗВАНИЕ", text_color = #F0B90B, text_size = size.normal)
+    table.cell(t, 1, 0, dealShort, text_color = obDir == 1 ? colLive : obDir == -1 ? colDead : color.white, text_size = size.normal)
     table.cell(t, 0, 1, "Откуда→куда", text_color = #848E9C, text_size = size.tiny)
     table.cell(t, 1, 1, routeTxt, text_color = #F0B90B, text_size = size.small)
     table.cell(t, 0, 2, "Почему", text_color = #848E9C, text_size = size.tiny)
