@@ -1,6 +1,7 @@
 //@version=6
-// Урок 15.02.2023: тормозной бар = лимитка остановила цену в тени.
-// ВСЁ на графике цены (overlay). Примеры истории выкл. по умолчанию.
+// Урок 15.02.2023 · Тормозной бар
+// ВАЖНО: индикатор должен висеть НА СВЕЧАХ, не в нижней панели.
+// Если внизу пустое окно — удали индикатор и Add to chart снова (на основной график).
 indicator("Урок · Тормозной бар", overlay = true, max_lines_count = 12, max_labels_count = 12)
 
 grp = "План"
@@ -9,17 +10,16 @@ wickPct   = input.float(40.0, "Тень % (тормоз)", minval = 25, maxval =
 bodyMax   = input.float(55.0, "Макс. тело %", minval = 20, maxval = 70, group = grp)
 tpR       = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
 slPad     = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
-liveAtr   = input.float(0.4, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
-freshBars = input.int(3, "Сигнал N свечей", minval = 1, maxval = 8, group = grp)
+liveAtr   = input.float(0.45, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
+freshBars = input.int(4, "Сигнал N свечей", minval = 1, maxval = 10, group = grp)
 atrLen    = input.int(14, "ATR", group = grp)
-showHist  = input.bool(false, "Показать учебные примеры на старых свечах", group = grp)
 
 colGo = #0ECB81
 colStop = #F6465D
 colTp = #3B82F6
-colWait = #848E9C
+colWait = #2B3139
 colLate = #F6465D
-colHint = #F0B90B
+colNow = #F0B90B
 
 atr = ta.atr(atrLen)
 volSma = ta.sma(volume, 20)
@@ -48,7 +48,7 @@ if brakeBot
         stop := s
         take := e + tpR * r
         side := 1
-        mode := "тормоз снизу"
+        mode := "тормоз снизу (лимитка покупок)"
 
 if brakeTop and na(entry)
     e = (high + close) / 2.0
@@ -59,7 +59,7 @@ if brakeTop and na(entry)
         stop := s
         take := e - tpR * r
         side := -1
-        mode := "тормоз сверху"
+        mode := "тормоз сверху (лимитка продаж)"
 
 var float eMem = na
 var float sMem = na
@@ -100,11 +100,9 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-plotshape(showHist and brakeBot, title = "пример тормоз ↑", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.tiny, text = "пример", textcolor = colGo)
-plotshape(showHist and brakeTop, title = "пример тормоз ↓", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.tiny, text = "пример", textcolor = colStop)
-
-// чтобы TV не делал пустую «панель с нулями» — рисуем невидимый close на оверлее
-plot(close, title = ".", display = display.none)
+// метки только на свече события (на цене), без отдельной панели
+plotshape(brakeBot and barstate.isconfirmed, title = "Тормоз лонг", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small, text = "ТОРМОЗ↑", textcolor = colGo)
+plotshape(brakeTop and barstate.isconfirmed, title = "Тормоз шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small, text = "ТОРМОЗ↓", textcolor = colStop)
 
 var line lnE = na
 var line lnS = na
@@ -122,33 +120,36 @@ if barstate.islast
     label.delete(lbE)
     label.delete(lbS)
     label.delete(lbT)
-    x2 = bar_index + 6
+    x2 = bar_index + 5
 
     if status == "WAIT"
-        lb := label.new(x2, close, "НЕ ВХОДИ\nжди тормозную свечу\nили поставь алерт", style = label.style_label_left, color = color.new(colWait, 5), textcolor = color.white, size = size.normal)
+        lb := label.new(bar_index, high + atr * 0.3, "НЕ ВХОДИ · сигнала нет\nжди свечу ТОРМОЗ↑ или ТОРМОЗ↓\nили алерт в TradingView", style = label.style_label_down, color = color.new(colWait, 0), textcolor = color.white, size = size.normal)
     else if status == "LATE"
-        lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
+        lb := label.new(bar_index, high + atr * 0.3, "ОПОЗДАЛ · не догоняй", style = label.style_label_down, color = color.new(colLate, 0), textcolor = color.white, size = size.large)
     else if status == "WAIT_FILL"
-        lb := label.new(x2, entry, "Жди цену к зелёной\n(" + mode + ")", style = label.style_label_left, color = color.new(colHint, 5), textcolor = color.black, size = size.normal)
-        lnE := line.new(bar_index - 2, entry, x2, entry, color = colGo, width = 3)
-        lnS := line.new(bar_index - 2, stop, x2, stop, color = colStop, width = 2)
-        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 2)
+        lb := label.new(bar_index, entry, "Жди цену к ВХОДУ\n" + mode, style = label.style_label_left, color = color.new(colNow, 0), textcolor = color.black, size = size.normal)
+        lnE := line.new(bar_index - 1, entry, x2, entry, color = colGo, width = 3)
+        lnS := line.new(bar_index - 1, stop, x2, stop, color = colStop, width = 2)
+        lnT := line.new(bar_index - 1, take, x2, take, color = colTp, width = 2)
+        lbE := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = colGo, textcolor = color.white, size = size.small)
+        lbS := label.new(x2, stop, "СТОП", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
     else
         sideTxt = side == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС"
         col = side == 1 ? colGo : colStop
-        lb := label.new(x2, entry, sideTxt + "\n" + mode + "\n1 вход  2 стоп  3 тейк", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
-        lnE := line.new(bar_index - 2, entry, x2, entry, color = colGo, width = 4)
-        lnS := line.new(bar_index - 2, stop, x2, stop, color = colStop, width = 3)
-        lnT := line.new(bar_index - 2, take, x2, take, color = colTp, width = 3)
-        lbE := label.new(x2, entry, "1 ВХОД", style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
-        lbS := label.new(x2, stop, "2 СТОП", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
-        lbT := label.new(x2, take, "3 ТЕЙК", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
+        lb := label.new(bar_index, entry, sideTxt + "\n" + mode, style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
+        lnE := line.new(bar_index - 1, entry, x2, entry, color = colGo, width = 4)
+        lnS := line.new(bar_index - 1, stop, x2, stop, color = colStop, width = 3)
+        lnT := line.new(bar_index - 1, take, x2, take, color = colTp, width = 3)
+        lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = colGo, textcolor = color.white, size = size.normal)
+        lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
+        lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
 
-var table t = table.new(position.bottom_right, 1, 2, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.top_right, 1, 2, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди зелёную линию" : "⏳ НЕ ВХОДИ · жди сигнал"
-    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colHint, text_size = size.large)
-    table.cell(t, 0, 1, haveSig ? (mode + " · вход " + str.tostring(entry, format.mintick)) : "тормоз = длинная тень + объём · алерт в TV", text_color = color.white, text_size = size.small)
+    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди линию ВХОД" : "⏳ НЕ ВХОДИ"
+    table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
+    table.cell(t, 0, 1, haveSig ? mode : "пустая панель внизу = индикатор не на свечах · удали и Add to chart снова", text_color = color.white, text_size = size.small)
 
 alertcondition(status == "NOW" and side == 1, "Лонг", "Тормоз снизу — ЛОНГ")
 alertcondition(status == "NOW" and side == -1, "Шорт", "Тормоз сверху — ШОРТ")
