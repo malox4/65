@@ -1,18 +1,19 @@
 //@version=6
-// Урок 21.02.2023 · Speed of Tape + Delta + Volume (ATAS → TV прокси)
-// Как другие уроки: примеры на истории + ЖДИ/СЕЙЧАС/ОПОЗДАЛ + 1 вход / 2 стоп / 3 тейк
-indicator("Урок · Speed of Tape (на свечах)", overlay = true, max_lines_count = 50, max_labels_count = 50)
+// Урок 21.02.2023 · Speed of Tape (прокси ATAS)
+// ВАЖНО ДЛЯ TV: если индикатор «внизу» в пустом окне —
+// 1) удали его крестиком  2) Add to chart заново (одного Save мало!)
+indicator(title = "65 SpeedTape", shorttitle = "65 SpeedTape", overlay = true, max_labels_count = 200, max_lines_count = 20)
 
 grp = "План"
 volMult   = input.float(1.3, "Объём × SMA", minval = 1.0, step = 0.1, group = grp)
-speedMult = input.float(1.5, "Плотность × SMA (прокси Speed)", minval = 1.1, step = 0.1, group = grp)
+speedMult = input.float(1.5, "Плотность × SMA", minval = 1.1, step = 0.1, group = grp)
 wickPct   = input.float(30.0, "Тень отбоя %", minval = 20, maxval = 70, group = grp)
 tpR       = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
 slPad     = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
 liveAtr   = input.float(0.5, "СЕЙЧАС если ≤ ATR× от входа", minval = 0.1, step = 0.05, group = grp)
 freshBars = input.int(5, "Сигнал N свечей", minval = 1, maxval = 15, group = grp)
 atrLen    = input.int(14, "ATR", group = grp)
-showHist  = input.bool(true, "Показать примеры на старых свечах", group = grp)
+showHist  = input.bool(true, "Примеры на истории", group = grp)
 
 colGo = #0ECB81
 colStop = #F6465D
@@ -25,21 +26,14 @@ colSpeed = #F0B90B
 atr = ta.atr(atrLen)
 volSma = ta.sma(volume, 20)
 rng = math.max(high - low, syminfo.mintick)
-bodyPct = math.abs(close - open) / rng * 100.0
 upW = (high - math.max(open, close)) / rng * 100.0
 loW = (math.min(open, close) - low) / rng * 100.0
 
-// прокси Speed of Tape = объём на пункт диапазона (на ATAS — скорость ленты)
 density = volume / rng
 densSma = ta.sma(density, 20)
-hiSpeed = density > densSma * speedMult
-hiVol = volume > volSma * volMult
-active = hiSpeed or hiVol
+active = density > densSma * speedMult or volume > volSma * volMult
 
-// как на уроке: всплеск активности + отбой (тень) → план разворота
-// лонг: активность + нижняя тень + close в верхней половине
 speedLong = active and loW >= wickPct and close > (high + low) / 2.0
-// шорт: активность + верхняя тень + close в нижней половине
 speedShort = active and upW >= wickPct and close < (high + low) / 2.0
 
 pad = slPad * atr
@@ -110,13 +104,12 @@ nearEntry = haveSig and math.abs(close - entry) <= liveAtr * atr
 late = haveSig and not nearEntry and (side == 1 ? close > entry : close < entry)
 status = not haveSig ? "WAIT" : nearEntry ? "NOW" : late ? "LATE" : "WAIT_FILL"
 
-// ——— ВИДНО НА ГРАФИКЕ ———
-// жёлтая свеча = был всплеск плотности/объёма (прокси Speed)
-barcolor(active ? color.new(colSpeed, 55) : na)
+// жёлтые свечи на ЦЕНЕ (barcolor всегда на основном графике)
+barcolor(active ? color.new(colSpeed, 50) : na)
 
-// треугольники = учебные примеры (не ордер)
-plotshape(showHist and speedLong, title = "Пример лонг", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small, text = "пример↑", textcolor = colGo)
-plotshape(showHist and speedShort, title = "Пример шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small, text = "пример↓", textcolor = colStop)
+// примеры — plotshape ТОЛЬКО при overlay=true будут у свечей
+plotshape(showHist and speedLong, title = "пример↑", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small, text = "пример↑", textcolor = colGo)
+plotshape(showHist and speedShort, title = "пример↓", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small, text = "пример↓", textcolor = colStop)
 
 var line lnE = na
 var line lnS = na
@@ -125,6 +118,7 @@ var label lb = na
 var label lbE = na
 var label lbS = na
 var label lbT = na
+var label lbHint = na
 
 if barstate.islast
     line.delete(lnE)
@@ -134,14 +128,18 @@ if barstate.islast
     label.delete(lbE)
     label.delete(lbS)
     label.delete(lbT)
+    label.delete(lbHint)
     x2 = bar_index + 8
 
+    // если видишь ЭТУ подсказку на цене — overlay ок; если она внизу в пустом окне — удали индикатор и Add to chart
+    lbHint := label.new(bar_index, high, "должны быть НА СВЕЧАХ\nне в пустом окне внизу", style = label.style_label_down, color = color.new(#F0B90B, 0), textcolor = color.black, size = size.tiny)
+
     if status == "WAIT"
-        lb := label.new(x2, close, "СЕЙЧАС НЕ ВХОДИ\nжёлтые свечи = всплеск Speed/Vol\nзелёный▲ / красный▼ = примеры\nвход только при «СЕЙЧАС»\nалерт: колокол → Any alert()", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+        lb := label.new(x2, close, "СЕЙЧАС НЕ ВХОДИ\nжёлтая = всплеск Speed/Vol\n▲▼ пример = не ордер\nвход только при СЕЙЧАС", style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
     else if status == "LATE"
-        lb := label.new(x2, close, "ОПОЗДАЛ\nне догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
-    else if status == "WAIT_FILL" or status == "NOW"
-        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди цену к входу") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди цену к входу")
+        lb := label.new(x2, close, "ОПОЗДАЛ · не догоняй", style = label.style_label_left, color = color.new(colLate, 5), textcolor = color.white, size = size.large)
+    else
+        sideTxt = side == 1 ? (status == "NOW" ? "ЛОНГ СЕЙЧАС" : "ЛОНГ · жди вход") : (status == "NOW" ? "ШОРТ СЕЙЧАС" : "ШОРТ · жди вход")
         col = side == 1 ? colGo : colStop
         lb := label.new(x2, entry, sideTxt + "\n" + mode + "\n1 вход  2 стоп  3 тейк", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.large)
         lnE := line.new(nz(bornMem, bar_index), entry, x2, entry, color = colGo, width = 4)
@@ -151,13 +149,12 @@ if barstate.islast
         lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = colStop, textcolor = color.white, size = size.normal)
         lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = colTp, textcolor = color.white, size = size.normal)
 
-var table t = table.new(position.top_right, 1, 4, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.top_right, 1, 3, bgcolor = color.new(#0B0E11, 0), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди линию ВХОД" : "⏳ ЖДИ"
+    big = status == "NOW" ? (side == 1 ? "👉 ЛОНГ СЕЙЧАС" : "👉 ШОРТ СЕЙЧАС") : status == "LATE" ? "⛔ ОПОЗДАЛ" : status == "WAIT_FILL" ? "⏳ жди ВХОД" : "⏳ ЖДИ"
     table.cell(t, 0, 0, big, text_color = status == "NOW" ? colGo : status == "LATE" ? colLate : colNow, text_size = size.large)
-    table.cell(t, 0, 1, haveSig ? (mode + "\nвход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "треугольники = учебные примеры · не ордера", text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 2, "жёлтая свеча = Speed/Vol всплеск · ▲план вверх · ▼план вниз", text_color = #848E9C, text_size = size.tiny)
-    table.cell(t, 0, 3, "Алерт: колокол → этот индикатор → Once Per Bar Close → Any alert()", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 1, haveSig ? (mode + "\nвход " + str.tostring(entry, format.mintick) + " | стоп " + str.tostring(stop, format.mintick) + " | тейк " + str.tostring(take, format.mintick)) : "▲▼ = примеры · жёлтая = Speed/Vol", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 2, "если индикатор ВНИЗУ в пустом окне → удали → Add to chart", text_color = #F0B90B, text_size = size.tiny)
 
 newLong = speedLong and not na(bornMem) and bar_index == bornMem and side == 1
 newShort = speedShort and not na(bornMem) and bar_index == bornMem and side == -1
@@ -166,15 +163,15 @@ goShort = status == "NOW" and side == -1 and not (status[1] == "NOW" and side[1]
 
 if barstate.isconfirmed
     if newLong
-        alert("SPEED↑ ЛОНГ · " + syminfo.ticker + " · вход ~ " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick), alert.freq_once_per_bar_close)
+        alert("SPEED↑ ЛОНГ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
     if newShort
-        alert("SPEED↓ ШОРТ · " + syminfo.ticker + " · вход ~ " + str.tostring(entry, format.mintick) + " · стоп " + str.tostring(stop, format.mintick) + " · тейк " + str.tostring(take, format.mintick), alert.freq_once_per_bar_close)
+        alert("SPEED↓ ШОРТ · " + syminfo.ticker + " · вход " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
     if goLong and not newLong
-        alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker + " · цена у входа " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
+        alert("ЛОНГ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
     if goShort and not newShort
-        alert("ШОРТ СЕЙЧАС · " + syminfo.ticker + " · цена у входа " + str.tostring(entry, format.mintick), alert.freq_once_per_bar_close)
+        alert("ШОРТ СЕЙЧАС · " + syminfo.ticker, alert.freq_once_per_bar_close)
 
-alertcondition(newLong, title = "Speed лонг", message = "Speed+Vol отбой снизу — смотри ЛОНГ")
-alertcondition(newShort, title = "Speed шорт", message = "Speed+Vol отбой сверху — смотри ШОРТ")
+alertcondition(newLong, title = "Speed лонг", message = "ЛОНГ Speed")
+alertcondition(newShort, title = "Speed шорт", message = "ШОРТ Speed")
 alertcondition(goLong, title = "Лонг сейчас", message = "ЛОНГ СЕЙЧАС")
 alertcondition(goShort, title = "Шорт сейчас", message = "ШОРТ СЕЙЧАС")

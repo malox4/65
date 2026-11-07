@@ -55,13 +55,14 @@
 
 ## Урок 21.02.2023 · Speed of Tape (`lesson_speed_tape.pine`)
 
-Запись ATAS (XRP): **Speed of Tape** + **Delta** + **Volume** у зон VA/POC. На TV — прокси плотности `volume/range`. Статусы ЖДИ / СЕЙЧАС / ОПОЗДАЛ, примеры с планом и исходом.
+Запись ATAS (XRP): **Speed of Tape** + **Delta** + **Volume** у зон VA/POC. На TV — прокси плотности `volume/range`. Статусы ЖДИ / СЕЙЧАС / ОПОЗДАЛ.
 
 Док: [`docs/lesson_speed_tape_2023-02-21.md`](../docs/lesson_speed_tape_2023-02-21.md).  
-Индикатор: **«Урок · Speed of Tape»**.
+Индикатор: **«65 SpeedTape»** (`overlay = true` — на свечах).
 
-1. Вставить `lesson_speed_tape.pine` → Add to chart.  
-2. ТФ **15m / 1H**. Старые pine не удалять.
+1. Если видишь **пустое окно внизу** с треугольниками — это старый экземпляр: **удали его крестиком**.  
+2. Вставить `lesson_speed_tape.pine` → Save → **Add to chart** (не только Save).  
+3. ТФ **15m / 1H**. Должны быть жёлтые свечи + ▲▼ **на цене**, не внизу.
 
 ## Урок 03.02.2022 · Zoner+Лента (`lesson_zoner_ribbon.pine`)
 
