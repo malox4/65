@@ -1,289 +1,226 @@
 //@version=6
-// Урок 08.03.2023: защита уровня лимитником vs вход после ухода под/над зону + POC H4/D1/W1.
-// Старые индикаторы уроков не трогаем — это ОТДЕЛЬНЫЙ файл.
-indicator("Урок · Защита уровня", overlay = true, max_lines_count = 40, max_boxes_count = 10, max_labels_count = 40)
+// Урок 08.03: ОДИН план — серая зона → либо ЗАЩИТА (отбой), либо ПРОБОЙ (ушла за зону).
+// Без спама треугольников. Один вход, один стоп, один тейк.
+indicator("Урок · Защита уровня", overlay = true, max_lines_count = 20, max_boxes_count = 5, max_labels_count = 20)
 
-grpZ = "Зона"
-swingLen   = input.int(5, "Swing для зоны", minval = 2, maxval = 20, group = grpZ)
-zoneAtr    = input.float(0.35, "Толщина зоны × ATR", minval = 0.1, step = 0.05, group = grpZ)
-nearAtr    = input.float(0.6, "«У зоны» если ≤ ATR×", minval = 0.2, step = 0.1, group = grpZ)
-tpR        = input.float(2.0, "Тейк в R", minval = 0.5, step = 0.25, group = grpZ)
-slPadAtr   = input.float(0.15, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grpZ)
-atrLen     = input.int(14, "ATR", group = grpZ)
-planBars   = input.int(30, "Держать план (свечей)", minval = 5, maxval = 80, group = grpZ)
+grp = "План"
+swingLen = input.int(5, "Swing зоны", minval = 2, maxval = 15, group = grp)
+zoneAtr  = input.float(0.35, "Толщина зоны × ATR", minval = 0.1, step = 0.05, group = grp)
+nearAtr  = input.float(0.6, "У зоны если ≤ ATR×", minval = 0.2, step = 0.1, group = grp)
+tpR      = input.float(2.0, "Тейк = риск ×", minval = 1.0, step = 0.5, group = grp)
+slPad    = input.float(0.15, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
+atrLen   = input.int(14, "ATR", group = grp)
+holdBars = input.int(25, "Держать план (свечей)", minval = 5, maxval = 60, group = grp)
+needEng  = input.bool(true, "Защите нужно поглощение", group = grp)
+showPoc  = input.bool(false, "Показать POC D1 (только ориентир, не тейк)", group = grp)
 
-grpP = "POC автоуровни (прокси)"
-showPocH4 = input.bool(true, "POC H4", group = grpP)
-showPocD1 = input.bool(true, "POC D1", group = grpP)
-showPocW1 = input.bool(true, "POC W1", group = grpP)
-pocLookH4 = input.int(48, "Окно H4 (баров H4)", minval = 12, maxval = 200, group = grpP)
-pocLookD1 = input.int(30, "Окно D1 (баров D1)", minval = 10, maxval = 120, group = grpP)
-pocLookW1 = input.int(26, "Окно W1 (баров W1)", minval = 8, maxval = 80, group = grpP)
-
-grpF = "Фильтры (как Autotrade)"
-useEngulf = input.bool(true, "Требовать поглощение у зоны (защита)", group = grpF)
-useCci    = input.bool(false, "Фильтр CCI (Нехочуха)", group = grpF)
-cciLen    = input.int(30, "CCI длина", group = grpF)
-cciBuy    = input.float(-150.0, "CCI ≤ для лонг-защиты", group = grpF)
-cciSell   = input.float(150.0, "CCI ≥ для шорт-защиты", group = grpF)
-
-colZone  = input.color(color.new(#848E9C, 75), "Заливка зоны", group = grpZ)
-colEdge  = input.color(#848E9C, "Край зоны", group = grpZ)
-colDef   = input.color(#0ECB81, "Защита", group = grpZ)
-colBrk   = input.color(#F0B90B, "Пробой", group = grpZ)
-colStop  = input.color(#F6465D, "Стоп", group = grpZ)
-colTp    = input.color(#3B82F6, "Тейк", group = grpZ)
-colPocH4 = input.color(#F59E0B, "POC H4", group = grpP)
-colPocD1 = input.color(#A855F7, "POC D1", group = grpP)
-colPocW1 = input.color(#06B6D4, "POC W1", group = grpP)
+colZone  = #848E9C
+colDef   = #0ECB81
+colBrk   = #F0B90B
+colStop  = #F6465D
+colTp    = #3B82F6
+colWait  = #848E9C
 
 atr = ta.atr(atrLen)
-cci = ta.cci(hlc3, cciLen)
-
-ph = ta.pivothigh(high, swingLen, swingLen)
-pl = ta.pivotlow(low, swingLen, swingLen)
-
+ph  = ta.pivothigh(high, swingLen, swingLen)
+pl  = ta.pivotlow(low, swingLen, swingLen)
 bullEng = close > open and close > high[1] and open <= low[1]
 bearEng = close < open and close < low[1] and open >= high[1]
 
-// POC прокси: close бара с max volume на старшем ТФ (без close[offset] — RE10008)
-f_poc(int look) =>
-    hv = ta.highest(volume, look)
-    ta.valuewhen(volume == hv, close, 0)
+pocD1 = showPoc ? request.security(syminfo.tickerid, "D", ta.valuewhen(volume == ta.highest(volume, 30), close, 0), lookahead = barmerge.lookahead_off) : na
 
-pocH4 = showPocH4 ? request.security(syminfo.tickerid, "240", f_poc(pocLookH4), lookahead = barmerge.lookahead_off) : na
-pocD1 = showPocD1 ? request.security(syminfo.tickerid, "D", f_poc(pocLookD1), lookahead = barmerge.lookahead_off) : na
-pocW1 = showPocW1 ? request.security(syminfo.tickerid, "W", f_poc(pocLookW1), lookahead = barmerge.lookahead_off) : na
-
-var float zMid = na
 var float zTop = na
 var float zBot = na
-var int   zDir = 0      // 1 сопротивление сверху, -1 поддержка снизу
+var float zMid = na
+var int   zDir = 0       // 1 = зона сверху (сопр.), -1 = снизу (подд.)
 var int   zBorn = na
-var int   phase = 0     // 0 idle, 1 wait, 2 defense, 3 break
-var int   armedBar = na
+var int   phase = 0      // 0 нет, 1 жди, 2 защита, 3 пробой
+var int   armed = na
+var int   side = 0       // 1 long, -1 short
 var float entry = na
 var float stop = na
 var float take = na
-var string dealName = ""
-var string dealWhy = ""
-var color dealCol = #0ECB81
+var string mode = ""
 
-pad = slPadAtr * atr
 half = zoneAtr * atr
+pad  = slPad * atr
 
-// новый свинг → зона (только global scope)
-if not na(ph)
-    if phase == 0 or phase == 1 or (phase >= 2 and not na(armedBar) and bar_index - armedBar > planBars)
+// новая зона — только в ожидании или если план протух
+planDead = phase >= 2 and not na(armed) and bar_index - armed > holdBars
+canNew   = phase == 0 or phase == 1 or planDead
+
+if not na(ph) and canNew
+    preferHi = na(zMid) or math.abs(close - ph) <= math.abs(close - nz(zMid))
+    if preferHi or phase == 0 or planDead
         zMid := ph
         zTop := ph + half
         zBot := ph - half
         zDir := 1
         zBorn := bar_index - swingLen
         phase := 1
-        armedBar := na
+        armed := na
+        side := 0
         entry := na
         stop := na
         take := na
-        dealName := ""
-        dealWhy := ""
+        mode := ""
 
-if not na(pl)
-    closer = na(zMid) or math.abs(close - pl) < math.abs(close - zMid)
-    expired = phase >= 2 and not na(armedBar) and bar_index - armedBar > planBars
-    if phase == 0 or (phase == 1 and closer) or (expired and closer)
+if not na(pl) and canNew
+    preferLo = na(zMid) or math.abs(close - pl) < math.abs(close - nz(zMid))
+    if preferLo or phase == 0 or planDead
         zMid := pl
         zTop := pl + half
         zBot := pl - half
         zDir := -1
         zBorn := bar_index - swingLen
         phase := 1
-        armedBar := na
+        armed := na
+        side := 0
         entry := na
         stop := na
         take := na
-        dealName := ""
-        dealWhy := ""
+        mode := ""
 
-nearZone = not na(zTop) and close <= zTop + nearAtr * atr and close >= zBot - nearAtr * atr
-cciOkLong = not useCci or cci <= cciBuy
-cciOkShort = not useCci or cci >= cciSell
+near = not na(zTop) and close <= zTop + nearAtr * atr and close >= zBot - nearAtr * atr
 
-// защита: отбой от зоны
-if phase == 1 and nearZone and not na(zMid)
-    if zDir == -1 and low <= zTop and close > zMid and close > open
-        engOk = not useEngulf or bullEng
-        if engOk and cciOkLong
-            e = close
-            s = zBot - pad
-            risk = e - s
-            if risk > 0
-                t = e + tpR * risk
-                if not na(pocH4) and pocH4 > e
-                    t := math.min(t, pocH4)
-                phase := 2
-                armedBar := bar_index
-                entry := e
-                stop := s
-                take := t
-                dealName := "ЗАЩИТА · ЛОНГ"
-                dealWhy := "лимит/отбой от зоны снизу"
-                dealCol := colDef
-    if phase == 1 and zDir == 1 and high >= zBot and close < zMid and close < open
-        engOk = not useEngulf or bearEng
-        if engOk and cciOkShort
-            e = close
-            s = zTop + pad
-            risk = s - e
-            if risk > 0
-                t = e - tpR * risk
-                if not na(pocH4) and pocH4 < e
-                    t := math.max(t, pocH4)
-                phase := 2
-                armedBar := bar_index
-                entry := e
-                stop := s
-                take := t
-                dealName := "ЗАЩИТА · ШОРТ"
-                dealWhy := "лимит/отбой от зоны сверху"
-                dealCol := colDef
+// ——— ЗАЩИТА: отбой от зоны ———
+if phase == 1 and near
+    // поддержка → лонг
+    if zDir == -1 and low <= zTop and close > zMid and close > open and (not needEng or bullEng)
+        e = close
+        s = zBot - pad
+        r = e - s
+        if r > 0
+            phase := 2
+            armed := bar_index
+            side := 1
+            entry := e
+            stop := s
+            take := e + tpR * r
+            mode := "ЗАЩИТА"
+    // сопротивление → шорт
+    if phase == 1 and zDir == 1 and high >= zBot and close < zMid and close < open and (not needEng or bearEng)
+        e = close
+        s = zTop + pad
+        r = s - e
+        if r > 0
+            phase := 2
+            armed := bar_index
+            side := -1
+            entry := e
+            stop := s
+            take := e - tpR * r
+            mode := "ЗАЩИТА"
 
-// пробой: цена ушла под/над зону
-if phase == 1 and not na(zMid)
+// ——— ПРОБОЙ: ушла за зону ———
+if phase == 1 and not na(zBot)
     if zDir == -1 and close < zBot and close[1] >= zBot
         e = close
         s = zTop + pad
-        risk = s - e
-        if risk > 0
+        r = s - e
+        if r > 0
             phase := 3
-            armedBar := bar_index
+            armed := bar_index
+            side := -1
             entry := e
             stop := s
-            take := e - tpR * risk
-            dealName := "ПРОБОЙ · ШОРТ"
-            dealWhy := "вход после ухода ПОД зону"
-            dealCol := colBrk
+            take := e - tpR * r
+            mode := "ПРОБОЙ"
     if phase == 1 and zDir == 1 and close > zTop and close[1] <= zTop
         e = close
         s = zBot - pad
-        risk = e - s
-        if risk > 0
+        r = e - s
+        if r > 0
             phase := 3
-            armedBar := bar_index
+            armed := bar_index
+            side := 1
             entry := e
             stop := s
-            take := e + tpR * risk
-            dealName := "ПРОБОЙ · ЛОНГ"
-            dealWhy := "вход после ухода НАД зону"
-            dealCol := colBrk
+            take := e + tpR * r
+            mode := "ПРОБОЙ"
 
-// сброс устаревшего плана
-if phase >= 2 and not na(armedBar) and bar_index - armedBar > planBars
-    phase := 0
-    entry := na
-    stop := na
-    take := na
-    dealName := ""
-    dealWhy := ""
+// протух / стоп-тейк достигнуты → сброс
+if phase >= 2 and not na(armed)
+    dead = bar_index - armed > holdBars
+    hitSl = side == 1 ? close < stop : close > stop
+    hitTp = side == 1 ? high >= take : low <= take
+    if dead or hitSl or hitTp
+        phase := 0
+        armed := na
+        side := 0
+        entry := na
+        stop := na
+        take := na
+        mode := ""
 
-justDefLong = phase == 2 and phase[1] == 1 and dealName == "ЗАЩИТА · ЛОНГ"
-justDefShort = phase == 2 and phase[1] == 1 and dealName == "ЗАЩИТА · ШОРТ"
-justBrk = phase == 3 and phase[1] == 1
-
-plotshape(justDefLong, title = "Защита лонг", style = shape.triangleup, location = location.belowbar, color = colDef, size = size.small, text = "ЗАЩИТА", textcolor = colDef)
-plotshape(justDefShort, title = "Защита шорт", style = shape.triangledown, location = location.abovebar, color = colDef, size = size.small, text = "ЗАЩИТА", textcolor = colDef)
-plotshape(justBrk and str.contains(dealName, "ЛОНГ"), title = "Пробой лонг", style = shape.triangleup, location = location.belowbar, color = colBrk, size = size.small, text = "ПРОБОЙ", textcolor = colBrk)
-plotshape(justBrk and str.contains(dealName, "ШОРТ"), title = "Пробой шорт", style = shape.triangledown, location = location.abovebar, color = colBrk, size = size.small, text = "ПРОБОЙ", textcolor = colBrk)
-plotshape(justDefLong and useEngulf and bullEng, title = "Поглощение", style = shape.circle, location = location.belowbar, color = colDef, size = size.tiny, text = "ПОГЛОЩЕНИЕ", textcolor = colDef)
-plotshape(justDefShort and useEngulf and bearEng, title = "Поглощение шорт", style = shape.circle, location = location.abovebar, color = colDef, size = size.tiny, text = "ПОГЛОЩЕНИЕ", textcolor = colDef)
-
-// рисунок только на последнем баре
+// ——— РИСОВАНИЕ: только текущий план, без истории ———
 var line lnTop = na
 var line lnBot = na
-var line lnEntry = na
-var line lnStop = na
-var line lnTake = na
-var line lnPocH4 = na
-var line lnPocD1 = na
-var line lnPocW1 = na
-var box zb = na
-var label lbTop = na
-var label lbBot = na
-var label lbDeal = na
-var label lbEntry = na
-var label lbStop = na
-var label lbTake = na
-var label lbPocH4 = na
-var label lbPocD1 = na
-var label lbPocW1 = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var line lnPoc = na
+var box bx = na
+var label lb = na
+var label lbE = na
+var label lbS = na
+var label lbT = na
+var label lbP = na
 
 if barstate.islast
     line.delete(lnTop)
     line.delete(lnBot)
-    line.delete(lnEntry)
-    line.delete(lnStop)
-    line.delete(lnTake)
-    line.delete(lnPocH4)
-    line.delete(lnPocD1)
-    line.delete(lnPocW1)
-    box.delete(zb)
-    label.delete(lbTop)
-    label.delete(lbBot)
-    label.delete(lbDeal)
-    label.delete(lbEntry)
-    label.delete(lbStop)
-    label.delete(lbTake)
-    label.delete(lbPocH4)
-    label.delete(lbPocD1)
-    label.delete(lbPocW1)
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    line.delete(lnPoc)
+    box.delete(bx)
+    label.delete(lb)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT)
+    label.delete(lbP)
 
-    x2 = bar_index + 8
-    if phase != 0 and not na(zTop) and not na(zBorn)
-        zb := box.new(zBorn, zTop, x2, zBot, bgcolor = colZone, border_color = colEdge, border_width = 1)
-        lnTop := line.new(zBorn, zTop, x2, zTop, color = colEdge, width = 2)
-        lnBot := line.new(zBorn, zBot, x2, zBot, color = colEdge, width = 2)
-        lbTop := label.new(x2, zTop, "ЗОНА ВЕРХ", style = label.style_label_left, color = color.new(colEdge, 20), textcolor = color.white, size = size.small)
-        lbBot := label.new(x2, zBot, "ЗОНА НИЗ", style = label.style_label_left, color = color.new(colEdge, 20), textcolor = color.white, size = size.small)
+    x2 = bar_index + 10
+    if phase >= 1 and not na(zTop) and not na(zBorn)
+        bx := box.new(zBorn, zTop, x2, zBot, bgcolor = color.new(colZone, 78), border_color = colZone, border_width = 1)
+        lnTop := line.new(zBorn, zTop, x2, zTop, color = colZone, width = 2)
+        lnBot := line.new(zBorn, zBot, x2, zBot, color = colZone, width = 2)
 
-        if phase >= 2 and not na(entry) and not na(stop) and not na(take) and not na(armedBar)
-            lnEntry := line.new(armedBar, entry, x2, entry, color = dealCol, width = 2)
-            lnStop := line.new(armedBar, stop, x2, stop, color = colStop, width = 2)
-            lnTake := line.new(armedBar, take, x2, take, color = colTp, width = 2)
-            lbEntry := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = color.new(dealCol, 10), textcolor = color.white, size = size.small)
-            lbStop := label.new(x2, stop, "СТОП", style = label.style_label_left, color = color.new(colStop, 10), textcolor = color.white, size = size.small)
-            lbTake := label.new(x2, take, "ТЕЙК", style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small)
-            doTxt = str.contains(dealName, "ШОРТ") ? "ШОРТ сейчас\nСтоп = красная\nТейк = синяя" : "ЛОНГ сейчас\nСтоп = красная\nТейк = синяя"
-            lbDeal := label.new(bar_index + 2, zMid, dealName + "\n" + dealWhy + "\n———\n" + doTxt, style = label.style_label_left, color = color.new(dealCol, 10), textcolor = color.white, size = size.normal)
+        if phase == 1
+            waitTxt = zDir == 1 ? "ЖДИ\n• отбой вниз = ЗАЩИТА шорт\n• уход ВЫШЕ = ПРОБОЙ лонг" : "ЖДИ\n• отбой вверх = ЗАЩИТА лонг\n• уход НИЖЕ = ПРОБОЙ шорт"
+            lb := label.new(x2, zMid, waitTxt, style = label.style_label_left, color = color.new(colWait, 10), textcolor = color.white, size = size.normal)
+        else if phase >= 2 and not na(entry)
+            sideTxt = side == 1 ? "ЛОНГ" : "ШОРТ"
+            why = mode == "ЗАЩИТА" ? "отбой от серой зоны" : "цена ушла из зоны"
+            col = mode == "ЗАЩИТА" ? colDef : colBrk
+            lb := label.new(x2, zMid, mode + " · " + sideTxt + "\n" + why + "\n———\n1) вход по зелёной\n2) стоп по красной\n3) тейк по синей", style = label.style_label_left, color = color.new(col, 5), textcolor = color.white, size = size.normal)
+            lnE := line.new(armed, entry, x2, entry, color = colDef, width = 3)
+            lnS := line.new(armed, stop, x2, stop, color = colStop, width = 3)
+            lnT := line.new(armed, take, x2, take, color = colTp, width = 3)
+            lbE := label.new(x2, entry, "1 ВХОД " + str.tostring(entry, format.mintick), style = label.style_label_left, color = color.new(colDef, 0), textcolor = color.white, size = size.normal)
+            lbS := label.new(x2, stop, "2 СТОП " + str.tostring(stop, format.mintick), style = label.style_label_left, color = color.new(colStop, 0), textcolor = color.white, size = size.normal)
+            lbT := label.new(x2, take, "3 ТЕЙК " + str.tostring(take, format.mintick), style = label.style_label_left, color = color.new(colTp, 0), textcolor = color.white, size = size.normal)
 
-    if showPocH4 and not na(pocH4)
-        lnPocH4 := line.new(bar_index - 40, pocH4, x2, pocH4, color = colPocH4, width = 1, style = line.style_dashed)
-        lbPocH4 := label.new(x2, pocH4, "POC H4", style = label.style_label_left, color = color.new(colPocH4, 30), textcolor = color.white, size = size.small)
-    if showPocD1 and not na(pocD1)
-        lnPocD1 := line.new(bar_index - 40, pocD1, x2, pocD1, color = colPocD1, width = 1, style = line.style_dashed)
-        lbPocD1 := label.new(x2, pocD1, "POC D1", style = label.style_label_left, color = color.new(colPocD1, 30), textcolor = color.white, size = size.small)
-    if showPocW1 and not na(pocW1)
-        lnPocW1 := line.new(bar_index - 40, pocW1, x2, pocW1, color = colPocW1, width = 1, style = line.style_dashed)
-        lbPocW1 := label.new(x2, pocW1, "POC W1", style = label.style_label_left, color = color.new(colPocW1, 30), textcolor = color.white, size = size.small)
+    if showPoc and not na(pocD1)
+        lnPoc := line.new(bar_index - 30, pocD1, x2, pocD1, color = color.new(#A855F7, 40), width = 1, style = line.style_dotted)
+        lbP := label.new(x2, pocD1, "POC D1 · не тейк", style = label.style_label_left, color = color.new(#A855F7, 50), textcolor = color.white, size = size.tiny)
 
-var table tb = table.new(position.bottom_right, 2, 8, bgcolor = color.new(#0B0E11, 10), border_width = 1, border_color = #2B3139)
+var table t = table.new(position.bottom_right, 2, 6, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    todo = phase == 0 ? "жди серую зону" : phase == 1 ? "НЕ входи · жди отбой или уход из зоны" : phase == 2 ? (str.contains(dealName, "ШОРТ") ? "ШОРТ от зоны · стоп/тейк на линиях" : "ЛОНГ от зоны · стоп/тейк на линиях") : (str.contains(dealName, "ШОРТ") ? "ШОРТ СЕЙЧАС · стоп выше зоны, тейк ниже" : "ЛОНГ СЕЙЧАС · стоп ниже зоны, тейк выше")
-    table.cell(tb, 0, 0, "ЧТО ДЕЛАТЬ", text_color = #F0B90B, text_size = size.small)
-    table.cell(tb, 1, 0, todo, text_color = color.white, text_size = size.small)
-    table.cell(tb, 0, 1, "Сделка", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 1, dealName == "" ? "—" : dealName, text_color = phase >= 2 ? dealCol : #848E9C, text_size = size.tiny)
-    table.cell(tb, 0, 2, "Почему", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 2, dealWhy == "" ? "—" : dealWhy, text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 0, 3, "Вход", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 3, na(entry) ? "—" : str.tostring(entry, format.mintick), text_color = colDef, text_size = size.tiny)
-    table.cell(tb, 0, 4, "Стоп", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 4, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colStop, text_size = size.tiny)
-    table.cell(tb, 0, 5, "Тейк", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 5, na(take) ? "—" : str.tostring(take, format.mintick), text_color = colTp, text_size = size.tiny)
-    table.cell(tb, 0, 6, "Серая зона", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 6, "уровень урока · от неё защита или пробой", text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 0, 7, "Пунктир POC", text_color = #848E9C, text_size = size.tiny)
-    table.cell(tb, 1, 7, "магниты объёма · не вход, а ориентир", text_color = color.white, text_size = size.tiny)
+    todo = phase == 0 ? "жди зону" : phase == 1 ? "НЕ ВХОДИ · жди отбой или уход" : side == 1 ? "ЛОНГ: 1 вход → 2 стоп → 3 тейк" : "ШОРТ: 1 вход → 2 стоп → 3 тейк"
+    table.cell(t, 0, 0, "ЧТО ДЕЛАТЬ", text_color = #F0B90B, text_size = size.normal)
+    table.cell(t, 1, 0, todo, text_color = color.white, text_size = size.normal)
+    table.cell(t, 0, 1, "Режим", text_color = #848E9C, text_size = size.small)
+    table.cell(t, 1, 1, phase <= 1 ? "ожидание" : mode + (side == 1 ? " · ЛОНГ" : " · ШОРТ"), text_color = phase <= 1 ? colWait : (mode == "ЗАЩИТА" ? colDef : colBrk), text_size = size.small)
+    table.cell(t, 0, 2, "1 Вход", text_color = #848E9C, text_size = size.small)
+    table.cell(t, 1, 2, na(entry) ? "—" : str.tostring(entry, format.mintick), text_color = colDef, text_size = size.small)
+    table.cell(t, 0, 3, "2 Стоп", text_color = #848E9C, text_size = size.small)
+    table.cell(t, 1, 3, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colStop, text_size = size.small)
+    table.cell(t, 0, 4, "3 Тейк", text_color = #848E9C, text_size = size.small)
+    table.cell(t, 1, 4, na(take) ? "—" : str.tostring(take, format.mintick) + "  (" + str.tostring(tpR, "#.#") + "R)", text_color = colTp, text_size = size.small)
+    table.cell(t, 0, 5, "Урок", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, "зона = уровень · защита ИЛИ пробой · один тейк", text_color = color.white, text_size = size.tiny)
 
-alertcondition(phase == 2 and phase[1] == 1, "Защита уровня", "Урок: сценарий ЗАЩИТА уровня")
-alertcondition(phase == 3 and phase[1] == 1, "Пробой зоны", "Урок: вход после ухода за зону")
+alertcondition(phase == 2 and phase[1] == 1, "Защита", "ЗАЩИТА уровня — смотри вход/стоп/тейк")
+alertcondition(phase == 3 and phase[1] == 1, "Пробой", "ПРОБОЙ зоны — смотри вход/стоп/тейк")
