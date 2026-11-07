@@ -1,0 +1,235 @@
+//@version=6
+// Урок 20.02.2023 · «Классический ОБ» + «Инсайд бар»
+// Как на схемах: слом инсайд-бара = классический ОБ → вход на ретесте края зоны, стоп за противоположным краем.
+// Индикатор для отслеживания на графике (не сигнал бота). Pine v6.
+indicator("Урок · ОБ + Инсайд", overlay = true, max_boxes_count = 60, max_lines_count = 60, max_labels_count = 80)
+
+// ── inputs ──────────────────────────────────────────────────────────────
+grpPat = "Паттерн"
+useIb      = input.bool(true, "Инсайд-бар → ОБ", group = grpPat, tooltip = "Mother + inside → слом диапазона mother = зона ОБ.")
+useClassic = input.bool(true, "Классический ОБ (импульс)", group = grpPat, tooltip = "Последняя встречная свеча перед сильным импульсом + опциональный sweep.")
+needSweep  = input.bool(true, "Классика: нужен sweep тенью", group = grpPat, tooltip = "Как на схеме: тень ниже/выше зоны перед импульсом.")
+impulseAtr = input.float(1.2, "Мин. тело импульса × ATR", minval = 0.4, step = 0.1, group = grpPat)
+maxOb      = input.int(5, "Макс. активных ОБ", minval = 1, maxval = 12, group = grpPat)
+retestBars = input.int(40, "Окно ретеста (свечей)", minval = 5, maxval = 120, group = grpPat)
+obPadAtr   = input.float(0.05, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grpPat)
+
+grpFil = "Фильтры (как на уроке)"
+useCci  = input.bool(false, "Фильтр CCI", group = grpFil)
+cciLen  = input.int(30, "CCI длина", group = grpFil)
+cciLim  = input.float(100, "CCI порог", group = grpFil, tooltip = "Лонг: CCI < порог; шорт: CCI > −порог.")
+useMacd = input.bool(false, "Фильтр MACD_LB (5,34,5)", group = grpFil, tooltip = "Как MACD_LB на скринах: лонг при hist≥0, шорт при hist≤0.")
+useEma  = input.bool(false, "Фильтр EMA тренда", group = grpFil)
+emaLen  = input.int(50, "EMA", group = grpFil)
+
+grpVis = "Вид"
+showIbMarks   = input.bool(true, "Метки инсайд-бара", group = grpVis)
+showLiqWicks  = input.bool(true, "Тени со снятием стопов", group = grpVis)
+showPlanTable = input.bool(true, "Таблица план входа", group = grpVis)
+tpR           = input.float(2.0, "Цель в R (линия)", minval = 0.5, step = 0.25, group = grpVis)
+colBullOb = input.color(color.new(#0ECB81, 82), "ОБ лонг", group = grpVis)
+colBearOb = input.color(color.new(#F6465D, 82), "ОБ шорт", group = grpVis)
+colEntry  = input.color(#F0B90B, "Линия входа", group = grpVis)
+colStop   = input.color(#F6465D, "Линия стопа", group = grpVis)
+colTp     = input.color(#0ECB81, "Линия TP", group = grpVis)
+
+atr = ta.atr(14)
+ema = ta.ema(close, emaLen)
+cci = ta.cci(hlc3, cciLen)
+[macdLine, signalLine, macdHist] = ta.macd(close, 5, 34, 5)
+
+bullFilter = (not useCci or cci < cciLim) and (not useMacd or macdHist >= 0) and (not useEma or close > ema)
+bearFilter = (not useCci or cci > -cciLim) and (not useMacd or macdHist <= 0) and (not useEma or close < ema)
+
+// ── inside bar ──────────────────────────────────────────────────────────
+// Текущая закрытая свеча — inside относительно предыдущей (mother)
+isInside = high < high[1] and low > low[1]
+
+// Слом: предыдущая была inside, сейчас закрылись за диапазон mother
+motherHigh = high[2]
+motherLow  = low[2]
+wasInside  = high[1] < motherHigh and low[1] > motherLow
+ibBreakUp  = useIb and wasInside and close > motherHigh and close > open
+ibBreakDn  = useIb and wasInside and close < motherLow and close < open
+
+if showIbMarks and isInside
+    label.new(bar_index, high, "IB", style = label.style_label_down, color = color.new(#848E9C, 30), textcolor = color.white, size = size.tiny)
+
+// ── classic OB: impulse after opposing candle (+ optional sweep) ────────
+body = math.abs(close - open)
+bullImpulse = close > open and body >= impulseAtr * atr and close > high[1]
+bearImpulse = close < open and body >= impulseAtr * atr and close < low[1]
+
+// зона = предыдущая встречная свеча (как «последний блок» перед импульсом)
+prevBear = close[1] < open[1]
+prevBull = close[1] > open[1]
+// sweep: тень предыдущей или импульсной свечи проколола локальный экстремум
+swingLo = ta.lowest(low, 8)[2]
+swingHi = ta.highest(high, 8)[2]
+sweepLow  = low[1] < swingLo or low < swingLo
+sweepHigh = high[1] > swingHi or high > swingHi
+
+classicBull = useClassic and bullImpulse and prevBear and (not needSweep or sweepLow)
+classicBear = useClassic and bearImpulse and prevBull and (not needSweep or sweepHigh)
+
+// ликвидность тенью (ДЗ с урока): длинная тень за локальный экстремум
+wickBelow = showLiqWicks and low < ta.lowest(low[1], 5) and (math.min(open, close) - low) > 0.55 * (high - low) and (high - low) > 0.6 * atr
+wickAbove = showLiqWicks and high > ta.highest(high[1], 5) and (high - math.max(open, close)) > 0.55 * (high - low) and (high - low) > 0.6 * atr
+bgcolor(wickBelow ? color.new(#0ECB81, 90) : wickAbove ? color.new(#F6465D, 90) : na)
+
+// ── state: active OBs ───────────────────────────────────────────────────
+var box[]    obBoxes  = array.new_box()
+var line[]   enLines  = array.new_line()
+var line[]   slLines  = array.new_line()
+var line[]   tpLines  = array.new_line()
+var label[]  enLabs   = array.new_label()
+var label[]  slLabs   = array.new_label()
+var float[]  obTop    = array.new_float()
+var float[]  obBot    = array.new_float()
+var int[]    obDir    = array.new_int()      // 1 long, -1 short
+var int[]    obBorn   = array.new_int()
+var bool[]   obArmed  = array.new_bool()     // импульс был, ждём ретест
+var bool[]   obHit    = array.new_bool()     // ретест пойман
+var string[] obSrc    = array.new_string()
+
+killOb(i) =>
+    box.delete(array.get(obBoxes, i))
+    line.delete(array.get(enLines, i))
+    line.delete(array.get(slLines, i))
+    line.delete(array.get(tpLines, i))
+    label.delete(array.get(enLabs, i))
+    label.delete(array.get(slLabs, i))
+    array.remove(obBoxes, i)
+    array.remove(enLines, i)
+    array.remove(slLines, i)
+    array.remove(tpLines, i)
+    array.remove(enLabs, i)
+    array.remove(slLabs, i)
+    array.remove(obTop, i)
+    array.remove(obBot, i)
+    array.remove(obDir, i)
+    array.remove(obBorn, i)
+    array.remove(obArmed, i)
+    array.remove(obHit, i)
+    array.remove(obSrc, i)
+
+trimOb() =>
+    while array.size(obBoxes) > maxOb
+        killOb(0)
+
+pushOb(dir, top, bot, src) =>
+    pad = obPadAtr * atr
+    top2 = top
+    bot2 = bot
+    if dir > 0
+        bot2 := bot - pad
+    else
+        top2 := top + pad
+    risk = top2 - bot2
+    if risk <= 0
+        risk := atr
+    entry = dir > 0 ? top2 : bot2
+    stop  = dir > 0 ? bot2 : top2
+    take  = dir > 0 ? entry + tpR * (entry - stop) : entry - tpR * (stop - entry)
+    bg = dir > 0 ? colBullOb : colBearOb
+    b = box.new(bar_index - (src == "IB" ? 2 : 1), top2, bar_index + 2, bot2, border_color = color.new(bg, 0), bgcolor = bg, border_width = 1, text = src + (dir > 0 ? " ОБ↑" : " ОБ↓"), text_color = color.white, text_size = size.tiny)
+    le = line.new(bar_index, entry, bar_index + retestBars, entry, color = colEntry, style = line.style_dashed, width = 1)
+    ls = line.new(bar_index, stop, bar_index + retestBars, stop, color = colStop, style = line.style_dotted, width = 1)
+    lt = line.new(bar_index, take, bar_index + retestBars, take, color = colTp, style = line.style_dotted, width = 1)
+    lbE = label.new(bar_index + 1, entry, "вход", style = label.style_label_left, color = color.new(colEntry, 20), textcolor = color.black, size = size.tiny)
+    lbS = label.new(bar_index + 1, stop, "стоп", style = label.style_label_left, color = color.new(colStop, 20), textcolor = color.white, size = size.tiny)
+    array.push(obBoxes, b)
+    array.push(enLines, le)
+    array.push(slLines, ls)
+    array.push(tpLines, lt)
+    array.push(enLabs, lbE)
+    array.push(slLabs, lbS)
+    array.push(obTop, top2)
+    array.push(obBot, bot2)
+    array.push(obDir, dir)
+    array.push(obBorn, bar_index)
+    array.push(obArmed, true)
+    array.push(obHit, false)
+    array.push(obSrc, src)
+    trimOb()
+
+// новые зоны
+if ibBreakUp and bullFilter
+    pushOb(1, motherHigh, motherLow, "IB")
+if ibBreakDn and bearFilter
+    pushOb(-1, motherHigh, motherLow, "IB")
+if classicBull and bullFilter and not ibBreakUp
+    pushOb(1, high[1], low[1], "ОБ")
+if classicBear and bearFilter and not ibBreakDn
+    pushOb(-1, high[1], low[1], "ОБ")
+
+// сопровождение: тянуть бокс, ретест, инвалидация
+var float planEntry = na
+var float planStop = na
+var float planTp = na
+var int   planDir = 0
+var string planWhy = ""
+
+if array.size(obBoxes) > 0
+    for i = array.size(obBoxes) - 1 to 0
+        top = array.get(obTop, i)
+        bot = array.get(obBot, i)
+        dir = array.get(obDir, i)
+        born = array.get(obBorn, i)
+        armed = array.get(obArmed, i)
+        hit = array.get(obHit, i)
+        age = bar_index - born
+        b = array.get(obBoxes, i)
+        box.set_right(b, bar_index + 1)
+        line.set_x2(array.get(enLines, i), bar_index + math.max(2, retestBars - age))
+        line.set_x2(array.get(slLines, i), bar_index + math.max(2, retestBars - age))
+        line.set_x2(array.get(tpLines, i), bar_index + math.max(2, retestBars - age))
+
+        // инвалидация: закрытие за стопом
+        dead = (dir > 0 and close < bot) or (dir < 0 and close > top) or age > retestBars
+        if dead
+            killOb(i)
+        else
+            entry = dir > 0 ? top : bot
+            stop  = dir > 0 ? bot : top
+            take  = dir > 0 ? entry + tpR * (entry - stop) : entry - tpR * (stop - entry)
+            // ретест: касание зоны после импульса (не на баре рождения)
+            touched = age >= 1 and low <= top and high >= bot
+            if armed and not hit and touched
+                array.set(obHit, i, true)
+                array.set(obArmed, i, false)
+                planEntry := entry
+                planStop := stop
+                planTp := take
+                planDir := dir
+                planWhy := array.get(obSrc, i) + (dir > 0 ? " лонг ретест" : " шорт ретест")
+                label.new(bar_index, dir > 0 ? low : high, dir > 0 ? "▲ ВХОД" : "▼ ВХОД", style = dir > 0 ? label.style_label_up : label.style_label_down, color = dir > 0 ? color.new(#0ECB81, 10) : color.new(#F6465D, 10), textcolor = color.white, size = size.small)
+                alert(planWhy + " · вход " + str.tostring(entry, format.mintick) + " стоп " + str.tostring(stop, format.mintick), alert.freq_once_per_bar_close)
+
+// ── table ───────────────────────────────────────────────────────────────
+var table t = table.new(position.bottom_right, 2, 7, bgcolor = color.new(#0B0E11, 15), border_width = 1, border_color = #2B3139)
+if showPlanTable and barstate.islast
+    table.cell(t, 0, 0, "УРОК ОБ+IB", text_color = #F0B90B, text_size = size.small)
+    table.cell(t, 1, 0, str.tostring(array.size(obBoxes)) + " зон", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, "CCI", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 1, str.tostring(cci, "#.##"), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "MACD hist", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 2, str.tostring(macdHist, "#.##"), text_color = macdHist >= 0 ? #0ECB81 : #F6465D, text_size = size.tiny)
+    table.cell(t, 0, 3, "План", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 3, planDir == 0 ? "ждём ретест" : planWhy, text_color = planDir > 0 ? #0ECB81 : planDir < 0 ? #F6465D : #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 4, "вход", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 4, na(planEntry) ? "—" : str.tostring(planEntry, format.mintick), text_color = colEntry, text_size = size.tiny)
+    table.cell(t, 0, 5, "стоп", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, na(planStop) ? "—" : str.tostring(planStop, format.mintick), text_color = colStop, text_size = size.tiny)
+    table.cell(t, 0, 6, "тейк " + str.tostring(tpR, "#.#") + "R", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 6, na(planTp) ? "—" : str.tostring(planTp, format.mintick), text_color = colTp, text_size = size.tiny)
+
+plotshape(ibBreakUp, title = "IB break ↑", style = shape.triangleup, location = location.belowbar, color = #0ECB81, size = size.tiny)
+plotshape(ibBreakDn, title = "IB break ↓", style = shape.triangledown, location = location.abovebar, color = #F6465D, size = size.tiny)
+plotshape(classicBull and not ibBreakUp, title = "Classic OB ↑", style = shape.circle, location = location.belowbar, color = color.new(#0ECB81, 40), size = size.tiny)
+plotshape(classicBear and not ibBreakDn, title = "Classic OB ↓", style = shape.circle, location = location.abovebar, color = color.new(#F6465D, 40), size = size.tiny)
+
+alertcondition(ibBreakUp, "IB break long OB", "Инсайд сломан вверх → ОБ лонг")
+alertcondition(ibBreakDn, "IB break short OB", "Инсайд сломан вниз → ОБ шорт")
+alertcondition(classicBull, "Classic bull OB", "Классический ОБ лонг")
+alertcondition(classicBear, "Classic bear OB", "Классический ОБ шорт")
