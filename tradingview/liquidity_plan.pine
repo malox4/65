@@ -1,0 +1,193 @@
+//@version=6
+// План сделки по уроку ликвидности (17.02): уровень → пробой → ретест → вход/стоп/тейк.
+// Старый liquidity_lesson.pine не трогаем — это ОТДЕЛЬНЫЙ индикатор для плана.
+indicator("Урок · План ретеста", overlay = true, max_lines_count = 30, max_boxes_count = 10, max_labels_count = 30)
+
+grp = "План"
+swingLen   = input.int(5, "Swing", minval = 2, maxval = 20, group = grp)
+retestBars = input.int(20, "Окно ретеста (свечей)", minval = 5, maxval = 60, group = grp)
+nearAtr    = input.float(0.8, "«Скоро пробой» если до уровня ≤ ATR×", minval = 0.2, step = 0.1, group = grp)
+tpR        = input.float(2.0, "Тейк в R", minval = 0.5, step = 0.25, group = grp)
+slPadAtr   = input.float(0.15, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grp)
+atrLen     = input.int(14, "ATR", group = grp)
+
+colLevel = input.color(#F0B90B, "Уровень", group = grp)
+colEntry = input.color(#0ECB81, "Вход", group = grp)
+colStop  = input.color(#F6465D, "Стоп", group = grp)
+colTp    = input.color(#3B82F6, "Тейк", group = grp)
+colWait  = input.color(#848E9C, "Ожидание", group = grp)
+
+atr = ta.atr(atrLen)
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lvl = na          // рабочий уровень
+var int   dir = 0           // 1 long (пробой вверх), -1 short (пробой вниз)
+var int   phase = 0         // 0 idle, 1 wait_break, 2 wait_retest, 3 armed (ретест пойман)
+var int   born = na
+var int   breakBar = na
+var float entry = na
+var float stop = na
+var float take = na
+
+// новые пивоты → кандидаты «что пробивать»
+if not na(ph)
+    // сопротивление сверху — цель пробоя вверх (лонг-сценарий)
+    if na(lvl) or phase == 0 or (phase == 1 and dir == 1)
+        lvl := ph
+        dir := 1
+        phase := 1
+        born := bar_index - swingLen
+        breakBar := na
+        entry := na
+        stop := na
+        take := na
+
+if not na(pl)
+    // поддержка снизу — цель пробоя вниз (шорт-сценарий)
+    // если оба обновились в один бар — берём ближайший к цене
+    useL = phase == 0 or (phase == 1 and dir == -1)
+    if not useL and phase == 1 and dir == 1 and not na(lvl)
+        // конкурирующий пивот: выбрать ближе к close
+        useL := math.abs(close - pl) < math.abs(close - lvl)
+    if useL or phase == 0
+        lvl := pl
+        dir := -1
+        phase := 1
+        born := bar_index - swingLen
+        breakBar := na
+        entry := na
+        stop := na
+        take := na
+
+pad = slPadAtr * atr
+
+// пробой
+if phase == 1 and not na(lvl)
+    if dir == 1 and close > lvl and close[1] <= lvl
+        phase := 2
+        breakBar := bar_index
+        entry := lvl
+        stop := lvl - pad
+        risk = entry - stop
+        take := entry + tpR * risk
+    if dir == -1 and close < lvl and close[1] >= lvl
+        phase := 2
+        breakBar := bar_index
+        entry := lvl
+        stop := lvl + pad
+        risk = stop - entry
+        take := entry - tpR * risk
+
+// таймаут ретеста
+if phase == 2 and not na(breakBar) and (bar_index - breakBar) > retestBars
+    phase := 0
+    lvl := na
+    dir := 0
+
+// ретест пойман
+if phase == 2 and not na(lvl)
+    touched = dir == 1 ? (low <= lvl and high >= lvl) : (high >= lvl and low <= lvl)
+    // не на баре пробоя
+    if touched and bar_index > breakBar
+        phase := 3
+        entry := lvl
+        if dir == 1
+            stop := math.min(low, lvl) - pad
+            risk = entry - stop
+            if risk <= 0
+                risk := atr
+            take := entry + tpR * risk
+        else
+            stop := math.max(high, lvl) + pad
+            risk = stop - entry
+            if risk <= 0
+                risk := atr
+            take := entry - tpR * risk
+
+// инвалидация после вооружения: закрытие за стопом
+if phase == 3 and not na(stop)
+    if (dir == 1 and close < stop) or (dir == -1 and close > stop)
+        phase := 0
+        lvl := na
+        dir := 0
+
+// тейк достигнут
+if phase == 3 and not na(take)
+    if (dir == 1 and high >= take) or (dir == -1 and low <= take)
+        phase := 0
+        lvl := na
+        dir := 0
+
+// «скоро пробой»
+nearBreak = phase == 1 and not na(lvl) and not na(atr) and math.abs(close - lvl) <= nearAtr * atr
+
+// ── рисунок (только активный план) ──────────────────────────────────────
+var line lnLevel = na
+var line lnEntry = na
+var line lnStop = na
+var line lnTp = na
+var box  bxZone = na
+var label lbPlan = na
+var label lbEntry = na
+var label lbStop = na
+var label lbTp = na
+
+if barstate.islast
+    line.delete(lnLevel)
+    line.delete(lnEntry)
+    line.delete(lnStop)
+    line.delete(lnTp)
+    box.delete(bxZone)
+    label.delete(lbPlan)
+    label.delete(lbEntry)
+    label.delete(lbStop)
+    label.delete(lbTp)
+
+    if phase != 0 and not na(lvl) and not na(born)
+        x2 = bar_index + 8
+        lnLevel := line.new(born, lvl, x2, lvl, color = colLevel, width = 2, style = line.style_solid)
+        half = math.max(nz(atr) * 0.15, syminfo.mintick * 5)
+        bxZone := box.new(math.max(born, bar_index - 3), lvl + half, x2, lvl - half, bgcolor = color.new(colLevel, 88), border_color = color.new(colLevel, 40), border_width = 1)
+
+        if phase >= 2 and not na(entry) and not na(stop) and not na(take) and not na(breakBar)
+            lnEntry := line.new(breakBar, entry, x2, entry, color = colEntry, width = 2, style = line.style_dashed)
+            lnStop := line.new(breakBar, stop, x2, stop, color = colStop, width = 2, style = line.style_dotted)
+            lnTp := line.new(breakBar, take, x2, take, color = colTp, width = 2, style = line.style_dotted)
+            lbEntry := label.new(x2, entry, "ВХОД", style = label.style_label_left, color = color.new(colEntry, 10), textcolor = color.white, size = size.small)
+            lbStop := label.new(x2, stop, "СТОП", style = label.style_label_left, color = color.new(colStop, 10), textcolor = color.white, size = size.small)
+            lbTp := label.new(x2, take, "ТЕЙК " + str.tostring(tpR, "#.#") + "R", style = label.style_label_left, color = color.new(colTp, 10), textcolor = color.white, size = size.small)
+
+        statusTxt = phase == 1 ? (nearBreak ? "СКОРО ПРОБОЙ — жди close за уровнем" : "ЖДИ ПРОБОЙ уровня") : phase == 2 ? "ЖДИ РЕТЕСТ → потом вход" : "РЕТЕСТ ЕСТЬ · можно позицию"
+        sideTxt = dir == 1 ? "ЛОНГ-план (пробой вверх)" : "ШОРТ-план (пробой вниз)"
+        lbPlan := label.new(bar_index + 2, lvl, sideTxt + "\n" + statusTxt, style = label.style_label_left, color = color.new(phase == 3 ? colEntry : phase == 2 ? colLevel : colWait, 15), textcolor = color.white, size = size.normal)
+
+plotshape(phase == 2 and phase[1] == 1, title = "Пробой", style = shape.diamond, location = location.belowbar, color = colLevel, size = size.small, text = "ПРОБОЙ", textcolor = colLevel)
+plotshape(phase == 3 and phase[1] == 2 and dir == 1, title = "Вход лонг", style = shape.triangleup, location = location.belowbar, color = colEntry, size = size.normal, text = "ВХОД ЛОНГ", textcolor = colEntry)
+plotshape(phase == 3 and phase[1] == 2 and dir == -1, title = "Вход шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.normal, text = "ВХОД ШОРТ", textcolor = colStop)
+
+// таблица-план
+var table t = table.new(position.bottom_right, 2, 8, bgcolor = color.new(#0B0E11, 12), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    st = phase == 0 ? "нет плана · ждём swing" : phase == 1 ? (nearBreak ? "почти у уровня" : "ждём пробой") : phase == 2 ? "ждём ретест" : "ретест · вход"
+    table.cell(t, 0, 0, "ПЛАН РЕТЕСТА", text_color = #F0B90B, text_size = size.small)
+    table.cell(t, 1, 0, st, text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, "Сторона", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 1, dir == 0 ? "—" : dir == 1 ? "ЛОНГ" : "ШОРТ", text_color = dir == 1 ? colEntry : dir == -1 ? colStop : #848E9C, text_size = size.tiny)
+    table.cell(t, 0, 2, "Уровень", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 2, na(lvl) ? "—" : str.tostring(lvl, format.mintick), text_color = colLevel, text_size = size.tiny)
+    table.cell(t, 0, 3, "Вход (ретест)", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 3, na(entry) ? "после пробоя" : str.tostring(entry, format.mintick), text_color = colEntry, text_size = size.tiny)
+    table.cell(t, 0, 4, "Стоп", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 4, na(stop) ? "—" : str.tostring(stop, format.mintick), text_color = colStop, text_size = size.tiny)
+    table.cell(t, 0, 5, "Тейк", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 5, na(take) ? "—" : str.tostring(take, format.mintick), text_color = colTp, text_size = size.tiny)
+    table.cell(t, 0, 6, "Что делать", text_color = #848E9C, text_size = size.tiny)
+    todo = phase == 0 ? "жди новый swing H/L" : phase == 1 ? "не входи · жди close за уровнем" : phase == 2 ? "не гонись · жди возврат к жёлтому" : "можно вход · стоп/тейк на линиях"
+    table.cell(t, 1, 6, todo, text_color = #F0B90B, text_size = size.tiny)
+    table.cell(t, 0, 7, "R", text_color = #848E9C, text_size = size.tiny)
+    table.cell(t, 1, 7, str.tostring(tpR, "#.#") + "R", text_color = color.white, text_size = size.tiny)
+
+alertcondition(phase == 2 and phase[1] == 1, "Пробой — жди ретест", "Уровень пробит, жди ретест")
+alertcondition(phase == 3 and phase[1] == 2, "Ретест — вход", "Ретест уровня, смотри вход")
+alertcondition(nearBreak and phase == 1, "Цена у уровня", "Скоро возможен пробой")
