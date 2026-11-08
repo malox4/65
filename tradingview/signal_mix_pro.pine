@@ -1,0 +1,397 @@
+//@version=6
+// 65 Signal Mix PRO
+// Сигнал только при совпадении 4 независимых слоёв:
+//   1) РЕЖИМ рынка  — тренд 4h, BTC 1h, волатильность (ATR-ранг), сессия
+//   2) СТРУКТУРА    — свип / пробой уровня + ретест / ОБ-ретест / пробой трендовой
+//   3) ПОТОК        — тормоз / DR тень 65% / плотность / поглощение (с объёмом)
+//   4) РИСК-ГЕЙТ    — стоп в коридоре % цены, TP в R, одна сделка, пауза
+// Встроенная форвард-статистика СВОИХ сигналов: N · в плюс % · средний R · кум. R · просадка · серия.
+// Вердикт «можно пробовать / не торговать деньгами» считается из этой статистики, а не из ощущений.
+// Статусы: ЖДИ → СЕЙЧАС (только на баре сигнала) → В СДЕЛКЕ → ИТОГ. Никакого «ОПОЗДАЛ»-входа.
+indicator("65 Signal Mix PRO", overlay = true, max_labels_count = 80, max_lines_count = 60, max_boxes_count = 20, max_bars_back = 1000)
+
+// ── Режим рынка ────────────────────────────────────────────────────────
+grpR = "1 · Режим рынка (обязательно)"
+useHtf   = input.bool(true, "Тренд старшего ТФ по ходу (EMA20/50)", group = grpR)
+htfTf    = input.timeframe("240", "Старший ТФ", group = grpR)
+useBtc   = input.bool(true, "BTC по ходу (EMA20/50)", group = grpR)
+btcSym   = input.symbol("BINANCE:BTCUSDT", "Символ BTC", group = grpR)
+btcTf    = input.timeframe("60", "ТФ BTC", group = grpR)
+useVola  = input.bool(true, "Волатильность: ATR-ранг ≥ порога", group = grpR)
+volaRank = input.float(60.0, "Мин. ATR-ранг, %", minval = 0, maxval = 100, step = 5, group = grpR)
+volaLook = input.int(500, "Окно ранга, баров", minval = 50, maxval = 1000, group = grpR)
+useSess  = input.bool(false, "Только в окне сессии", group = grpR)
+sess     = input.session("0700-2200", "Окно сессии (UTC)", group = grpR)
+
+// ── Риск-гейт ──────────────────────────────────────────────────────────
+grpK = "4 · Риск-гейт (обязательно)"
+minStopPct = input.float(0.5, "Мин. стоп, % цены", minval = 0.05, step = 0.05, group = grpK, tooltip = "Узкий стоп на крипте выбивает шумом. Урок из журнала: не уже ~0.5%.")
+maxStopPct = input.float(2.5, "Макс. стоп, % цены", minval = 0.2, step = 0.1, group = grpK)
+slPad      = input.float(0.1, "Запас стопа × ATR", minval = 0.0, step = 0.05, group = grpK)
+tp1R       = input.float(1.0, "TP1 = R ×", minval = 0.5, step = 0.25, group = grpK)
+tp2R       = input.float(2.0, "TP2 = R × (закрытие сделки в статистике)", minval = 0.5, step = 0.25, group = grpK)
+horizon    = input.int(32, "Макс. свечей в сделке", minval = 4, maxval = 300, group = grpK)
+cooldown   = input.int(12, "Пауза после сделки, свечей", minval = 0, maxval = 100, group = grpK)
+riskPct    = input.float(1.0, "Риск на сделку, % депозита", minval = 0.1, step = 0.1, group = grpK)
+
+// ── Структура ──────────────────────────────────────────────────────────
+grpS = "2 · Структура (нужен ≥1)"
+useSweep  = input.bool(true, "Свип экстремума", group = grpS)
+useBos    = input.bool(true, "Пробой уровня + ретест", group = grpS)
+useOb     = input.bool(true, "ОБ: импульс + ретест", group = grpS)
+useTl     = input.bool(true, "Пробой трендовой", group = grpS)
+swingLen  = input.int(8, "Свинг для свипа, баров", minval = 3, maxval = 30, group = grpS)
+pivotLen  = input.int(5, "Пивот", minval = 2, maxval = 15, group = grpS)
+retestWin = input.int(16, "Окно ретеста, баров", minval = 3, maxval = 60, group = grpS)
+impAtr    = input.float(1.2, "Импульс ОБ × ATR", minval = 0.5, step = 0.1, group = grpS)
+
+// ── Поток ──────────────────────────────────────────────────────────────
+grpF = "3 · Поток / свеча (нужен ≥1)"
+useBrake = input.bool(true, "Тормоз: тень ≥55% + объём", group = grpF)
+useDr    = input.bool(true, "DR: тень ≥65%, тело ≤90%", group = grpF)
+useTape  = input.bool(true, "Плотность volume/range", group = grpF)
+useEng   = input.bool(true, "Поглощение + объём", group = grpF)
+volMult  = input.float(1.3, "Объём × SMA20", minval = 1.0, step = 0.05, group = grpF)
+tapeMult = input.float(1.5, "Плотность × SMA20", minval = 1.0, step = 0.1, group = grpF)
+
+// ── Статистика ─────────────────────────────────────────────────────────
+grpV = "Статистика и вердикт"
+minTrades = input.int(30, "Мин. сделок для вердикта", minval = 5, maxval = 300, group = grpV)
+minAvgR   = input.float(0.10, "Мин. средний R для «можно пробовать»", step = 0.05, group = grpV)
+maxDDok   = input.float(8.0, "Макс. просадка, R", minval = 1, step = 0.5, group = grpV)
+showHist  = input.bool(true, "Метки прошлых сигналов", group = grpV)
+
+colGo   = #0ECB81
+colStop = #F6465D
+colTp   = #3B82F6
+colNow  = #F0B90B
+colGray = #848E9C
+colDark = #1E2329
+
+// ── База ───────────────────────────────────────────────────────────────
+atr     = ta.atr(14)
+volSma  = ta.sma(volume, 20)
+hiVol   = volume > volSma * volMult
+rng     = math.max(high - low, syminfo.mintick)
+bodyPct = math.abs(close - open) / rng * 100.0
+upW     = (high - math.max(open, close)) / rng * 100.0
+loW     = (math.min(open, close) - low) / rng * 100.0
+mid     = (high + low) / 2.0
+density = volume / rng
+densSma = ta.sma(density, 20)
+pad     = slPad * atr
+
+// ── 1. Режим ───────────────────────────────────────────────────────────
+// Берём закрытый бар старшего ТФ ([1] + lookahead_on) — без перерисовки, статистика честная.
+htfRaw = ta.ema(close, 20) > ta.ema(close, 50) ? 1 : -1
+htfDir = request.security(syminfo.tickerid, htfTf, htfRaw[1], lookahead = barmerge.lookahead_on)
+btcDir = request.security(btcSym, btcTf, htfRaw[1], lookahead = barmerge.lookahead_on)
+atrPct = atr / close * 100.0
+rank   = ta.percentrank(atrPct, volaLook)
+volaOk = not useVola or (not na(rank) and rank >= volaRank)
+sessOk = not useSess or not na(time(timeframe.period, sess))
+regimeL = (not useHtf or htfDir == 1) and (not useBtc or btcDir == 1) and volaOk and sessOk
+regimeS = (not useHtf or htfDir == -1) and (not useBtc or btcDir == -1) and volaOk and sessOk
+
+// ── 2. Структура ───────────────────────────────────────────────────────
+priorHi = ta.highest(high[1], swingLen)
+priorLo = ta.lowest(low[1], swingLen)
+sweepL = useSweep and low < priorLo and close > priorLo and close > mid
+sweepS = useSweep and high > priorHi and close < priorHi and close < mid
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float lvlH = na
+var float lvlL = na
+var int brkUpBar = na
+var int brkDnBar = na
+if not na(ph)
+    lvlH := ph
+    brkUpBar := na
+if not na(pl)
+    lvlL := pl
+    brkDnBar := na
+if not na(lvlH) and na(brkUpBar) and close > lvlH and close[1] <= lvlH
+    brkUpBar := bar_index
+if not na(lvlL) and na(brkDnBar) and close < lvlL and close[1] >= lvlL
+    brkDnBar := bar_index
+bosL = useBos and not na(brkUpBar) and bar_index > brkUpBar and bar_index - brkUpBar <= retestWin and low <= lvlH and close > lvlH
+bosS = useBos and not na(brkDnBar) and bar_index > brkDnBar and bar_index - brkDnBar <= retestWin and high >= lvlL and close < lvlL
+
+body    = math.abs(close - open)
+bullImp = close > open and body >= impAtr * atr and close > high[1] and close[1] < open[1]
+bearImp = close < open and body >= impAtr * atr and close < low[1] and close[1] > open[1]
+var float obLTop = na
+var float obLBot = na
+var int   obLBar = na
+var float obSTop = na
+var float obSBot = na
+var int   obSBar = na
+if bullImp
+    obLTop := high[1]
+    obLBot := low[1]
+    obLBar := bar_index
+if bearImp
+    obSTop := high[1]
+    obSBot := low[1]
+    obSBar := bar_index
+obL = useOb and not na(obLTop) and bar_index - obLBar >= 2 and bar_index - obLBar <= 40 and low <= obLTop and close > obLTop
+obS = useOb and not na(obSTop) and bar_index - obSBar >= 2 and bar_index - obSBar <= 40 and high >= obSBot and close < obSBot
+float obLBotNow = obLBot
+float obSTopNow = obSTop
+if not na(obLTop) and close < obLBot
+    obLTop := na
+if not na(obSTop) and close > obSTop
+    obSTop := na
+
+var float h1 = na
+var float h2 = na
+var int   hb1 = na
+var int   hb2 = na
+var float l1 = na
+var float l2 = na
+var int   lb1 = na
+var int   lb2 = na
+if not na(ph)
+    h2 := h1
+    hb2 := hb1
+    h1 := ph
+    hb1 := bar_index - pivotLen
+if not na(pl)
+    l2 := l1
+    lb2 := lb1
+    l1 := pl
+    lb1 := bar_index - pivotLen
+float tlDn = na
+float tlUp = na
+if not na(h1) and not na(h2) and h2 > h1 and hb1 > hb2
+    tlDn := h2 + (h1 - h2) * (bar_index - hb2) / (hb1 - hb2)
+if not na(l1) and not na(l2) and l2 < l1 and lb1 > lb2
+    tlUp := l2 + (l1 - l2) * (bar_index - lb2) / (lb1 - lb2)
+tlL = useTl and not na(tlDn) and not na(tlDn[1]) and close > tlDn and close[1] <= tlDn[1] and hiVol
+tlS = useTl and not na(tlUp) and not na(tlUp[1]) and close < tlUp and close[1] >= tlUp[1] and hiVol
+
+structL = (sweepL ? 1 : 0) + (bosL ? 1 : 0) + (obL ? 1 : 0) + (tlL ? 1 : 0)
+structS = (sweepS ? 1 : 0) + (bosS ? 1 : 0) + (obS ? 1 : 0) + (tlS ? 1 : 0)
+
+float stopLc = na
+float stopSc = na
+if sweepL or bosL or tlL
+    stopLc := low - pad
+if obL
+    stopLc := na(stopLc) ? obLBotNow - pad : math.min(stopLc, obLBotNow - pad)
+if sweepS or bosS or tlS
+    stopSc := high + pad
+if obS
+    stopSc := na(stopSc) ? obSTopNow + pad : math.max(stopSc, obSTopNow + pad)
+
+// ── 3. Поток ───────────────────────────────────────────────────────────
+brakeL = useBrake and hiVol and loW >= 55.0 and close > open
+brakeS = useBrake and hiVol and upW >= 55.0 and close < open
+drL    = useDr and hiVol and loW >= 65.0 and bodyPct <= 90.0 and close > mid
+drS    = useDr and hiVol and upW >= 65.0 and bodyPct <= 90.0 and close < mid
+tapeL  = useTape and density > densSma * tapeMult and loW >= 30.0 and close > mid
+tapeS  = useTape and density > densSma * tapeMult and upW >= 30.0 and close < mid
+engL   = useEng and hiVol and close > open and close > open[1] and open <= close[1] and close[1] < open[1]
+engS   = useEng and hiVol and close < open and close < open[1] and open >= close[1] and close[1] > open[1]
+flowL  = (brakeL ? 1 : 0) + (drL ? 1 : 0) + (tapeL ? 1 : 0) + (engL ? 1 : 0)
+flowS  = (brakeS ? 1 : 0) + (drS ? 1 : 0) + (tapeS ? 1 : 0) + (engS ? 1 : 0)
+
+whyL = (sweepL ? "• свип лоу\n" : "") + (bosL ? "• пробой уровня + ретест\n" : "") + (obL ? "• ОБ ретест\n" : "") + (tlL ? "• пробой трендовой\n" : "") + (brakeL ? "• тормоз снизу\n" : "") + (drL ? "• DR тень 65%\n" : "") + (tapeL ? "• плотность\n" : "") + (engL ? "• поглощение\n" : "")
+whyS = (sweepS ? "• свип хая\n" : "") + (bosS ? "• пробой уровня + ретест\n" : "") + (obS ? "• ОБ ретест\n" : "") + (tlS ? "• пробой трендовой\n" : "") + (brakeS ? "• тормоз сверху\n" : "") + (drS ? "• DR тень 65%\n" : "") + (tapeS ? "• плотность\n" : "") + (engS ? "• поглощение\n" : "")
+
+// ── 4. Риск-гейт + кандидаты ───────────────────────────────────────────
+candL = structL >= 1 and flowL >= 1 and regimeL and not na(stopLc) and close > stopLc
+candS = structS >= 1 and flowS >= 1 and regimeS and not na(stopSc) and close < stopSc
+stopPctL = candL ? (close - stopLc) / close * 100.0 : na
+stopPctS = candS ? (stopSc - close) / close * 100.0 : na
+riskOkL = candL and stopPctL >= minStopPct and stopPctL <= maxStopPct
+riskOkS = candS and stopPctS >= minStopPct and stopPctS <= maxStopPct
+
+// ── Состояние сделки и статистика ──────────────────────────────────────
+var int    tradeDir = 0
+var float  tEntry = na
+var float  tStop  = na
+var float  tTp1   = na
+var float  tTp2   = na
+var int    tBar   = na
+var string tWhy   = ""
+var int    tStructN = 0
+var int    tFlowN   = 0
+var int    lastClose = na
+
+var int    nTrades = 0
+var int    nWin    = 0
+var float  sumR    = 0.0
+var float  cumR    = 0.0
+var float  peakR   = 0.0
+var float  maxDD   = 0.0
+var int    streakLoss = 0
+var int    maxStreakLoss = 0
+var string lastRes = "—"
+var float  lastR   = na
+
+int   outcome = 0
+float resR = na
+if tradeDir != 0 and bar_index > tBar
+    if tradeDir == 1
+        if low <= tStop
+            outcome := -1
+            resR := -1.0
+        else if high >= tTp2
+            outcome := 1
+            resR := tp2R
+        else if bar_index - tBar >= horizon
+            outcome := 2
+            resR := (close - tEntry) / (tEntry - tStop)
+    else
+        if high >= tStop
+            outcome := -1
+            resR := -1.0
+        else if low <= tTp2
+            outcome := 1
+            resR := tp2R
+        else if bar_index - tBar >= horizon
+            outcome := 2
+            resR := (tEntry - close) / (tStop - tEntry)
+    if outcome != 0
+        nTrades += 1
+        if resR > 0
+            nWin += 1
+            streakLoss := 0
+        else
+            streakLoss += 1
+            maxStreakLoss := math.max(maxStreakLoss, streakLoss)
+        sumR  += resR
+        cumR  += resR
+        peakR := math.max(peakR, cumR)
+        maxDD := math.max(maxDD, peakR - cumR)
+        lastRes := outcome == 1 ? "TP2 ✓" : outcome == -1 ? "СТОП ✗" : "время"
+        lastR := resR
+        lastClose := bar_index
+        tradeDir := 0
+
+coolOk = na(lastClose) or bar_index - lastClose >= cooldown
+fireL = riskOkL and tradeDir == 0 and coolOk
+fireS = riskOkS and tradeDir == 0 and coolOk and not fireL
+if fireL
+    tradeDir := 1
+    tEntry := close
+    tStop  := stopLc
+    tTp1   := close + tp1R * (close - stopLc)
+    tTp2   := close + tp2R * (close - stopLc)
+    tBar   := bar_index
+    tWhy   := whyL
+    tStructN := structL
+    tFlowN   := flowL
+if fireS
+    tradeDir := -1
+    tEntry := close
+    tStop  := stopSc
+    tTp1   := close - tp1R * (stopSc - close)
+    tTp2   := close - tp2R * (stopSc - close)
+    tBar   := bar_index
+    tWhy   := whyS
+    tStructN := structS
+    tFlowN   := flowS
+
+status = tradeDir != 0 ? (tBar == bar_index ? "NOW" : "ACTIVE") : (not na(lastClose) and lastClose == bar_index ? "DONE" : "WAIT")
+
+avgR   = nTrades > 0 ? sumR / nTrades : na
+hitPct = nTrades > 0 ? nWin * 100.0 / nTrades : na
+verdict = nTrades < minTrades ? "МАЛО ДАННЫХ · только бумага" : (avgR >= minAvgR and maxDD <= maxDDok ? "СТАТИСТИКА ОК · малый риск" : "КРАЙ НЕ ПОДТВЕРЖДЁН · не деньгами")
+verdictCol = nTrades < minTrades ? colNow : (avgR >= minAvgR and maxDD <= maxDDok ? colGo : colStop)
+
+stopPctT = tradeDir == 1 ? (tEntry - tStop) / tEntry * 100.0 : tradeDir == -1 ? (tStop - tEntry) / tEntry * 100.0 : na
+posPct   = not na(stopPctT) and stopPctT > 0 ? riskPct / stopPctT * 100.0 : na
+levHint  = not na(posPct) ? posPct / 100.0 : na
+
+// ── История сигналов ───────────────────────────────────────────────────
+plotshape(showHist and fireL, title = "PRO лонг", style = shape.triangleup, location = location.belowbar, color = colGo, size = size.small)
+plotshape(showHist and fireS, title = "PRO шорт", style = shape.triangledown, location = location.abovebar, color = colStop, size = size.small)
+plotshape(showHist and outcome == 1, title = "TP2", style = shape.circle, location = location.abovebar, color = color.new(colTp, 30), size = size.tiny)
+plotshape(showHist and outcome == -1, title = "Стоп", style = shape.xcross, location = location.belowbar, color = color.new(colStop, 30), size = size.tiny)
+
+// ── Рисунок активного плана ────────────────────────────────────────────
+var line  lnE = na
+var line  lnS = na
+var line  lnT1 = na
+var line  lnT2 = na
+var box   bxRisk = na
+var box   bxReward = na
+var label lbMain = na
+var label lbWhy = na
+var label lbE = na
+var label lbS = na
+var label lbT1 = na
+var label lbT2 = na
+
+if barstate.islast
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT1)
+    line.delete(lnT2)
+    box.delete(bxRisk)
+    box.delete(bxReward)
+    label.delete(lbMain)
+    label.delete(lbWhy)
+    label.delete(lbE)
+    label.delete(lbS)
+    label.delete(lbT1)
+    label.delete(lbT2)
+    x2 = bar_index + 10
+    if tradeDir != 0
+        col = tradeDir == 1 ? colGo : colStop
+        b0 = tBar
+        lnE  := line.new(b0, tEntry, x2, tEntry, color = colNow, width = 3)
+        lnS  := line.new(b0, tStop, x2, tStop, color = colStop, width = 2, style = line.style_dotted)
+        lnT1 := line.new(b0, tTp1, x2, tTp1, color = colTp, width = 1, style = line.style_dashed)
+        lnT2 := line.new(b0, tTp2, x2, tTp2, color = colTp, width = 2, style = line.style_dashed)
+        bxRisk   := box.new(b0, math.max(tEntry, tStop), x2, math.min(tEntry, tStop), bgcolor = color.new(colStop, 88), border_color = color.new(colStop, 60))
+        bxReward := box.new(b0, math.max(tEntry, tTp2), x2, math.min(tEntry, tTp2), bgcolor = color.new(colGo, 90), border_color = color.new(colGo, 60))
+        pct1 = math.abs(tTp1 - tEntry) / tEntry * 100.0
+        pct2 = math.abs(tTp2 - tEntry) / tEntry * 100.0
+        head = status == "NOW" ? (tradeDir == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : (tradeDir == 1 ? "В СДЕЛКЕ · ЛОНГ" : "В СДЕЛКЕ · ШОРТ")
+        lbMain := label.new(x2, tEntry, head + "\nструктура " + str.tostring(tStructN) + " · поток " + str.tostring(tFlowN) + "\nстоп " + str.tostring(stopPctT, "#.##") + "% · позиция ≈ " + str.tostring(posPct, "#") + "% депо (×" + str.tostring(levHint, "#.#") + ")\nриск " + str.tostring(riskPct, "#.#") + "% депо", style = label.style_label_left, color = color.new(col, 0), textcolor = color.white, size = size.normal)
+        lbWhy  := label.new(math.max(0, b0 - 1), tradeDir == 1 ? tStop : tTp2, "ПОЧЕМУ:\n" + tWhy + "режим: 4h " + (htfDir == 1 ? "↑" : "↓") + " · BTC " + (btcDir == 1 ? "↑" : "↓") + " · ATR-ранг " + str.tostring(rank, "#"), style = label.style_label_right, color = color.new(colDark, 0), textcolor = color.white, size = size.small)
+        lbE  := label.new(x2, tEntry, "ВХОД " + str.tostring(tEntry, format.mintick), style = label.style_label_left, color = colNow, textcolor = color.black, size = size.small)
+        lbS  := label.new(x2, tStop, "СТОП " + str.tostring(tStop, format.mintick) + " (−1R · −" + str.tostring(stopPctT, "#.##") + "%)", style = label.style_label_left, color = colStop, textcolor = color.white, size = size.small)
+        lbT1 := label.new(x2, tTp1, "TP1 " + str.tostring(tTp1, format.mintick) + " (+" + str.tostring(pct1, "#.##") + "% · " + str.tostring(tp1R, "#.#") + "R)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+        lbT2 := label.new(x2, tTp2, "TP2 " + str.tostring(tTp2, format.mintick) + " (+" + str.tostring(pct2, "#.##") + "% · " + str.tostring(tp2R, "#.#") + "R)", style = label.style_label_left, color = colTp, textcolor = color.white, size = size.small)
+    else
+        gateTxt = "ЖДИ · сделки нет\nструктура L" + str.tostring(structL) + "/S" + str.tostring(structS) + " · поток L" + str.tostring(flowL) + "/S" + str.tostring(flowS) + "\nрежим: лонг " + (regimeL ? "✓" : "✗") + " · шорт " + (regimeS ? "✓" : "✗") + "\n4h " + (htfDir == 1 ? "↑" : "↓") + " · BTC " + (btcDir == 1 ? "↑" : "↓") + " · ATR-ранг " + str.tostring(rank, "#") + (useSess ? (sessOk ? " · сессия ✓" : " · вне сессии") : "")
+        lbMain := label.new(x2, close, gateTxt, style = label.style_label_left, color = color.new(colDark, 0), textcolor = color.white, size = size.normal)
+
+// ── Таблица ────────────────────────────────────────────────────────────
+var table t = table.new(position.top_right, 2, 8, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    big = status == "NOW" ? (tradeDir == 1 ? "ЛОНГ СЕЙЧАС" : "ШОРТ СЕЙЧАС") : status == "ACTIVE" ? (tradeDir == 1 ? "В СДЕЛКЕ · ЛОНГ" : "В СДЕЛКЕ · ШОРТ") : status == "DONE" ? ("ИТОГ: " + lastRes + " " + str.tostring(lastR, "#.##") + "R") : "ЖДИ"
+    bigCol = status == "NOW" or status == "ACTIVE" ? (tradeDir == 1 ? colGo : colStop) : status == "DONE" ? (lastR > 0 ? colGo : colStop) : colNow
+    table.cell(t, 0, 0, "65 MIX PRO", text_color = colNow, text_size = size.small)
+    table.cell(t, 1, 0, big, text_color = bigCol, text_size = size.large)
+    table.cell(t, 0, 1, "План", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 1, tradeDir != 0 ? ("вход " + str.tostring(tEntry, format.mintick) + " · стоп " + str.tostring(tStop, format.mintick) + " · TP2 " + str.tostring(tTp2, format.mintick)) : "нужно: структура ≥1 + поток ≥1 + режим + стоп " + str.tostring(minStopPct, "#.##") + "–" + str.tostring(maxStopPct, "#.#") + "%", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "Режим", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 2, "4h " + (htfDir == 1 ? "↑" : "↓") + " · BTC " + (btcDir == 1 ? "↑" : "↓") + " · ATR-ранг " + str.tostring(rank, "#") + "% (≥" + str.tostring(volaRank, "#") + ")" + (useSess ? (sessOk ? " · сессия ✓" : " · сессия ✗") : ""), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "Сделок", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 3, str.tostring(nTrades) + " · в плюс " + (na(hitPct) ? "—" : str.tostring(hitPct, "#") + "%") + " · послед.: " + lastRes, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "Средний R", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 4, (na(avgR) ? "—" : str.tostring(avgR, "#.##") + "R") + " · кум. " + str.tostring(cumR, "#.#") + "R", text_color = na(avgR) ? color.white : (avgR > 0 ? colGo : colStop), text_size = size.tiny)
+    table.cell(t, 0, 5, "Просадка", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 5, str.tostring(maxDD, "#.#") + "R · серия минусов " + str.tostring(maxStreakLoss), text_color = maxDD > maxDDok ? colStop : color.white, text_size = size.tiny)
+    table.cell(t, 0, 6, "Вердикт", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 6, verdict, text_color = verdictCol, text_size = size.small)
+    table.cell(t, 0, 7, "Правило", text_color = colGray, text_size = size.tiny)
+    table.cell(t, 1, 7, "ордер только при СЕЙЧАС · одна сделка · риск " + str.tostring(riskPct, "#.#") + "% · стоп ≥ " + str.tostring(minStopPct, "#.##") + "%", text_color = colGray, text_size = size.tiny)
+
+// ── Алерты ─────────────────────────────────────────────────────────────
+if fireL
+    alert("MIX PRO ЛОНГ · " + syminfo.ticker + " · вход " + str.tostring(close, format.mintick) + " · стоп " + str.tostring(stopLc, format.mintick) + " · TP2 " + str.tostring(close + tp2R * (close - stopLc), format.mintick) + "\n" + whyL, alert.freq_once_per_bar_close)
+if fireS
+    alert("MIX PRO ШОРТ · " + syminfo.ticker + " · вход " + str.tostring(close, format.mintick) + " · стоп " + str.tostring(stopSc, format.mintick) + " · TP2 " + str.tostring(close - tp2R * (stopSc - close), format.mintick) + "\n" + whyS, alert.freq_once_per_bar_close)
+if outcome != 0
+    alert("MIX PRO ИТОГ · " + syminfo.ticker + " · " + lastRes + " · " + str.tostring(lastR, "#.##") + "R · всего " + str.tostring(nTrades), alert.freq_once_per_bar_close)
+
+alertcondition(fireL, title = "PRO лонг сейчас", message = "ЛОНГ СЕЙЧАС · 65 Mix PRO")
+alertcondition(fireS, title = "PRO шорт сейчас", message = "ШОРТ СЕЙЧАС · 65 Mix PRO")
+alertcondition(outcome != 0, title = "PRO сделка закрыта", message = "Итог сделки · 65 Mix PRO")
