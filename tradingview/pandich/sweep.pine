@@ -1,32 +1,34 @@
 //@version=6
-// Pandich Sweep — recreation from published logic (not a verbatim copy of TV source).
-// Liquidity-sweep reversal: wick takes out N-bar extreme, close back inside, far-half close.
-// Plan: entry=close, stop behind wick + ATR buffer (min 0.5 ATR, skip if > max ATR), TP 1/2/3R.
-// One trade, conservative same-bar (stop first), net-of-cost E in R. Confirmed bars only.
-indicator("Pandich Sweep [65]", overlay = true, max_labels_count = 80, max_lines_count = 60, max_boxes_count = 40, max_bars_back = 500)
+// Sweep [pandich] — recreation matched to published defaults/legend/panel.
+// Legend ref: SWEEP-p 20 1 14 0.2 0.5 3 1 2 3 60 1 0.3 · Top right · n<30 grey
+indicator("Sweep [pandich]", shorttitle = "SWEEP-p", overlay = true, max_labels_count = 100, max_lines_count = 80, max_boxes_count = 50, max_bars_back = 500)
 
 grpS = "Sweep"
 lookback = input.int(20, "Sweep lookback", minval = 5, maxval = 100, group = grpS)
-volMult  = input.float(1.0, "Volume × SMA20 (0 = off)", minval = 0.0, step = 0.1, group = grpS)
+volMult  = input.float(1.0, "Volume multiplier", minval = 0.0, step = 0.1, group = grpS, tooltip = "0 = off")
 atrLen   = input.int(14, "ATR length", minval = 1, group = grpS)
 
 grpR = "Risk"
-stopBuf  = input.float(0.2, "Stop buffer × ATR", minval = 0.0, step = 0.05, group = grpR)
-minStopA = input.float(0.5, "Min stop × ATR", minval = 0.1, step = 0.1, group = grpR)
-maxStopA = input.float(3.0, "Max stop × ATR (0 = off)", minval = 0.0, step = 0.5, group = grpR)
-tp1R     = input.float(1.0, "TP1 R", minval = 0.25, step = 0.25, group = grpR)
-tp2R     = input.float(2.0, "TP2 R", minval = 0.25, step = 0.25, group = grpR)
-tp3R     = input.float(3.0, "TP3 R", minval = 0.25, step = 0.25, group = grpR)
+stopBuf  = input.float(0.2, "Stop buffer behind wick (×ATR)", minval = 0.0, step = 0.05, group = grpR)
+minStopA = input.float(0.5, "Min stop (×ATR)", minval = 0.1, step = 0.1, group = grpR)
+maxStopA = input.float(3.0, "Max stop (×ATR, 0=off)", minval = 0.0, step = 0.5, group = grpR)
+tp1R     = input.float(1.0, "TP1 (R)", minval = 0.25, step = 0.25, group = grpR)
+tp2R     = input.float(2.0, "TP2 (R)", minval = 0.25, step = 0.25, group = grpR)
+tp3R     = input.float(3.0, "TP3 (R)", minval = 0.25, step = 0.25, group = grpR)
 horizon  = input.int(60, "Give-up bars", minval = 5, maxval = 300, group = grpR)
 cooldown = input.int(1, "Re-entry cooldown", minval = 0, maxval = 50, group = grpR)
-cost     = input.float(0.30, "Cost per round trip (price)", minval = 0.0, step = 0.01, group = grpR)
+cost     = input.float(0.30, "Cost per trade (price)", minval = 0.0, step = 0.01, group = grpR)
 
 grpD = "Display"
 showZones = input.bool(true, "Draw zones", group = grpD)
-keepN     = input.int(8, "Keep last drawings", minval = 1, maxval = 40, group = grpD)
-colL = input.color(#0ECB81, "Long", group = grpD)
-colS = input.color(#F6465D, "Short", group = grpD)
-colTp = input.color(#3B82F6, "Targets", group = grpD)
+keepN     = input.int(6, "Keep last drawings", minval = 1, maxval = 40, group = grpD)
+panelPos  = input.string("Top right", "Panel position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpD)
+minSample = input.int(30, "Grey stats below N trades", minval = 5, group = grpD)
+colL = input.color(#26A69A, "Long", group = grpD)
+colS = input.color(#EF5350, "Short", group = grpD)
+colTp = input.color(#42A5F5, "Targets", group = grpD)
+
+posMap = panelPos == "Top left" ? position.top_left : panelPos == "Bottom right" ? position.bottom_right : panelPos == "Bottom left" ? position.bottom_left : position.top_right
 
 atr = ta.atr(atrLen)
 volOk = volMult <= 0 or volume > ta.sma(volume, 20) * volMult
@@ -73,6 +75,7 @@ var float tTp2 = na
 var float tTp3 = na
 var int tBar = na
 var int lastClose = na
+var bool sawTp1 = false
 
 var int nTrades = 0
 var int nTp1 = 0
@@ -82,57 +85,54 @@ var float sumR_tp1 = 0.0
 var float sumR_tp3 = 0.0
 var int nSkip = 0
 
-if skipL or skipS
+if (skipL or skipS) and (rawLong or rawShort)
     nSkip += 1
 
 int outcome = 0
 float resR = na
-bool hitTp1 = false
 if tradeDir != 0 and bar_index > tBar
     riskU = math.abs(tEntry - tStop)
     costR = riskU > 0 ? cost / riskU : 0.0
     if tradeDir == 1
+        if high >= tTp1
+            sawTp1 := true
         if low <= tStop
             outcome := -1
             resR := -1.0 - costR
         else if high >= tTp3
             outcome := 3
             resR := tp3R - costR
-            hitTp1 := true
+            sawTp1 := true
         else if bar_index - tBar >= horizon
             outcome := 2
             resR := (close - tEntry) / riskU - costR
-            hitTp1 := high >= tTp1
-        else if high >= tTp1
-            hitTp1 := true
     else
+        if low <= tTp1
+            sawTp1 := true
         if high >= tStop
             outcome := -1
             resR := -1.0 - costR
         else if low <= tTp3
             outcome := 3
             resR := tp3R - costR
-            hitTp1 := true
+            sawTp1 := true
         else if bar_index - tBar >= horizon
             outcome := 2
             resR := (tEntry - close) / riskU - costR
-            hitTp1 := low <= tTp1
-        else if low <= tTp1
-            hitTp1 := true
     if outcome != 0
         nTrades += 1
-        if hitTp1 or outcome == 3
+        if sawTp1 or outcome == 3
             nTp1 += 1
         if outcome == 3
             nTp3 += 1
         if outcome == -1
             nStop += 1
-        // E as if flat at TP1 vs held to TP3/stop/time
-        rTp1 = hitTp1 or outcome == 3 ? tp1R - costR : resR
+        rTp1 = sawTp1 or outcome == 3 ? tp1R - costR : resR
         sumR_tp1 += rTp1
         sumR_tp3 += resR
         lastClose := bar_index
         tradeDir := 0
+        sawTp1 := false
 
 coolOk = na(lastClose) or bar_index - lastClose >= cooldown
 fireL = sigL and tradeDir == 0 and coolOk
@@ -146,6 +146,7 @@ if fireL
     tTp2 := tEntry + tp2R * risk
     tTp3 := tEntry + tp3R * risk
     tBar := bar_index
+    sawTp1 := false
 if fireS
     tradeDir := -1
     tEntry := close
@@ -155,17 +156,18 @@ if fireS
     tTp2 := tEntry - tp2R * risk
     tTp3 := tEntry - tp3R * risk
     tBar := bar_index
+    sawTp1 := false
 
 eTp1 = nTrades > 0 ? sumR_tp1 / nTrades : na
 eTp3 = nTrades > 0 ? sumR_tp3 / nTrades : na
 tp1Pct = nTrades > 0 ? nTp1 * 100.0 / nTrades : na
 tp3Pct = nTrades > 0 ? nTp3 * 100.0 / nTrades : na
 stopPct = nTrades > 0 ? nStop * 100.0 / nTrades : na
-enough = nTrades >= 30
+enough = nTrades >= minSample
 txtCol = enough ? color.white : color.gray
 
-plotshape(fireL, title = "Sweep long", style = shape.labelup, location = location.belowbar, color = colL, text = "SWEEP", textcolor = color.white, size = size.small)
-plotshape(fireS, title = "Sweep short", style = shape.labeldown, location = location.abovebar, color = colS, text = "SWEEP", textcolor = color.white, size = size.small)
+plotshape(fireL, title = "Long", style = shape.triangleup, location = location.belowbar, color = colL, size = size.tiny, text = "SWEEP", textcolor = colL)
+plotshape(fireS, title = "Short", style = shape.triangledown, location = location.abovebar, color = colS, size = size.tiny, text = "SWEEP", textcolor = colS)
 
 var line lnE = na
 var line lnS = na
@@ -174,7 +176,15 @@ var line ln2 = na
 var line ln3 = na
 var box bxR = na
 var box bxW = na
-var label lb = na
+var int drawnId = na
+
+// Persist closed trade zones (up to keepN)
+var array<box> histRisk = array.new_box()
+var array<box> histRew = array.new_box()
+if tradeDir == 0 and not na(drawnId) and drawnId != tBar
+    // trade just closed on prior logic — drawings cleared below; snapshot handled via markers
+    drawnId := na
+
 if barstate.islast
     line.delete(lnE)
     line.delete(lnS)
@@ -183,41 +193,45 @@ if barstate.islast
     line.delete(ln3)
     box.delete(bxR)
     box.delete(bxW)
-    label.delete(lb)
     if showZones and tradeDir != 0
         x2 = bar_index + 8
-        c = tradeDir == 1 ? colL : colS
         lnE := line.new(tBar, tEntry, x2, tEntry, color = color.yellow, width = 2)
         lnS := line.new(tBar, tStop, x2, tStop, color = colS, width = 2, style = line.style_dotted)
         ln1 := line.new(tBar, tTp1, x2, tTp1, color = colTp, width = 1, style = line.style_dashed)
         ln2 := line.new(tBar, tTp2, x2, tTp2, color = colTp, width = 1, style = line.style_dashed)
         ln3 := line.new(tBar, tTp3, x2, tTp3, color = colTp, width = 2, style = line.style_dashed)
-        bxR := box.new(tBar, math.max(tEntry, tStop), x2, math.min(tEntry, tStop), bgcolor = color.new(colS, 88), border_color = color.new(colS, 60))
-        bxW := box.new(tBar, math.max(tEntry, tTp3), x2, math.min(tEntry, tTp3), bgcolor = color.new(colL, 90), border_color = color.new(colL, 60))
-        lb := label.new(x2, tEntry, (tradeDir == 1 ? "LONG" : "SHORT") + "\nE " + str.tostring(tEntry, format.mintick) + "\nSL " + str.tostring(tStop, format.mintick) + "\nTP3 " + str.tostring(tTp3, format.mintick), style = label.style_label_left, color = c, textcolor = color.white, size = size.small)
+        bxR := box.new(tBar, math.max(tEntry, tStop), x2, math.min(tEntry, tStop), bgcolor = color.new(colS, 85), border_color = color.new(colS, 55))
+        bxW := box.new(tBar, math.max(tEntry, tTp3), x2, math.min(tEntry, tTp3), bgcolor = color.new(colL, 88), border_color = color.new(colL, 55))
+        drawnId := tBar
+    // trim unused hist arrays if any
+    while array.size(histRisk) > keepN
+        box.delete(array.shift(histRisk))
+    while array.size(histRew) > keepN
+        box.delete(array.shift(histRew))
 
-var table t = table.new(position.top_right, 2, 8, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+var table t = table.new(posMap, 2, 8, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    table.cell(t, 0, 0, "Sweep", text_color = color.yellow, text_size = size.small)
-    table.cell(t, 1, 0, tradeDir != 0 ? (tradeDir == 1 ? "LONG" : "SHORT") : "WAIT", text_color = tradeDir == 1 ? colL : tradeDir == -1 ? colS : color.gray, text_size = size.normal)
-    table.cell(t, 0, 1, "Trades", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 1, str.tostring(nTrades) + " · skip " + str.tostring(nSkip), text_color = txtCol, text_size = size.tiny)
-    table.cell(t, 0, 2, "→TP1", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 2, na(tp1Pct) ? "—" : str.tostring(tp1Pct, "#.#") + "%", text_color = txtCol, text_size = size.tiny)
-    table.cell(t, 0, 3, "→TP3", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 3, na(tp3Pct) ? "—" : str.tostring(tp3Pct, "#.#") + "%", text_color = txtCol, text_size = size.tiny)
-    table.cell(t, 0, 4, "Stopped", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 4, na(stopPct) ? "—" : str.tostring(stopPct, "#.#") + "%", text_color = txtCol, text_size = size.tiny)
-    table.cell(t, 0, 5, "E TP1 net", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 5, na(eTp1) ? "—" : str.tostring(eTp1, "#.##") + "R", text_color = enough ? (eTp1 > 0 ? colL : colS) : color.gray, text_size = size.tiny)
-    table.cell(t, 0, 6, "E TP3 net", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 6, na(eTp3) ? "—" : str.tostring(eTp3, "#.##") + "R", text_color = enough ? (eTp3 > 0 ? colL : colS) : color.gray, text_size = size.tiny)
-    table.cell(t, 0, 7, "Note", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 7, enough ? "sample ok · cost " + str.tostring(cost) : "<30 trades = noise", text_color = color.gray, text_size = size.tiny)
+    head = "SWEEP [pandich] | " + syminfo.ticker + " · " + timeframe.period
+    table.cell(t, 0, 0, head, text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, tradeDir != 0 ? (tradeDir == 1 ? "LONG" : "SHORT") : "", text_color = tradeDir == 1 ? colL : tradeDir == -1 ? colS : color.gray, text_size = size.small)
+    table.cell(t, 0, 1, "trades", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, str.tostring(nTrades) + "  (skipped " + str.tostring(nSkip) + ")", text_color = txtCol, text_size = size.tiny)
+    table.cell(t, 0, 2, "→ TP1", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, na(tp1Pct) ? "—" : str.tostring(tp1Pct, "#") + "%", text_color = txtCol, text_size = size.tiny)
+    table.cell(t, 0, 3, "→ TP3", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, na(tp3Pct) ? "—" : str.tostring(tp3Pct, "#") + "%", text_color = txtCol, text_size = size.tiny)
+    table.cell(t, 0, 4, "stopped", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, na(stopPct) ? "—" : str.tostring(stopPct, "#") + "%", text_color = txtCol, text_size = size.tiny)
+    table.cell(t, 0, 5, "E @ TP1 (net)", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, na(eTp1) ? "—" : (eTp1 >= 0 ? "+" : "") + str.tostring(eTp1, "#.##") + "R", text_color = enough ? (eTp1 > 0 ? colL : colS) : color.gray, text_size = size.tiny)
+    table.cell(t, 0, 6, "E @ TP3 (net)", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 6, na(eTp3) ? "—" : (eTp3 >= 0 ? "+" : "") + str.tostring(eTp3, "#.##") + "R", text_color = enough ? (eTp3 > 0 ? colL : colS) : color.gray, text_size = size.tiny)
+    table.cell(t, 0, 7, "note", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 7, "E in R after cost " + str.tostring(cost) + "; n<" + str.tostring(minSample) + " = noise", text_color = color.gray, text_size = size.tiny)
 
 if fireL
-    alert("Sweep LONG · " + syminfo.ticker + " · " + str.tostring(close, format.mintick) + " SL " + str.tostring(stopL, format.mintick), alert.freq_once_per_bar_close)
+    alert("Sweep long · " + syminfo.ticker + " · " + str.tostring(close, format.mintick) + " SL " + str.tostring(stopL, format.mintick), alert.freq_once_per_bar_close)
 if fireS
-    alert("Sweep SHORT · " + syminfo.ticker + " · " + str.tostring(close, format.mintick) + " SL " + str.tostring(stopS, format.mintick), alert.freq_once_per_bar_close)
-alertcondition(fireL, title = "Sweep long", message = "Sweep long")
-alertcondition(fireS, title = "Sweep short", message = "Sweep short")
+    alert("Sweep short · " + syminfo.ticker + " · " + str.tostring(close, format.mintick) + " SL " + str.tostring(stopS, format.mintick), alert.freq_once_per_bar_close)
+alertcondition(fireL, title = "Sweep long", message = "Sweep [pandich]: long")
+alertcondition(fireS, title = "Sweep short", message = "Sweep [pandich]: short")
