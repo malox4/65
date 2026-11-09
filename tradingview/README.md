@@ -1,5 +1,12 @@
 # 65 SMC Map (TradingView)
 
+## Pandich · логические копии профиля (`pandich/`)
+
+10 индикаторов по логике публичных скриптов [panda77778](https://ru.tradingview.com/u/panda77778/#published-scripts): Sweep, Liquidity EZ, Zone Rank, Panda Scanner, Ultra Signals, Matematik 2.6, Supertrend TP, ZigZag Signals, Buy Sell V1, Sessions+S/D Daily.
+
+Папка: [`tradingview/pandich/`](pandich/) · README: [`pandich/README.md`](pandich/README.md).  
+Это воссоздание правил (вход/стоп/TP/панель), не экспорт исходников с TV.
+
 ## Главный рабочий · Signal Mix (`lesson_signal_mix.pine`)
 
 Микс **уроков + старого mix_map** (SK Fib, BOS/CHoCH, FVG, Z146, Asia, сжатие, фигуры…): на графике **только сигнал, почему, рисунок причины, вход/стоп/тейк с ценой**. Остальное голосует в фоне (конфлюенс ≥2).

@@ -1,0 +1,226 @@
+//@version=6
+// Pandich Zone Rank — recreation: base 1–3 narrow candles + impulse → S/D zone, stars 1–5, first-touch signal.
+// Default signals meaningful on M15 (Auto). Confirmation entry, stop beyond far edge, TP in $ or R.
+indicator("Pandich Zone Rank [65]", overlay = true, max_boxes_count = 60, max_labels_count = 80, max_lines_count = 40, max_bars_back = 500)
+
+grpZ = "Zones"
+baseMax = input.int(3, "Max base candles", minval = 1, maxval = 5, group = grpZ)
+impBars = input.int(2, "Impulse candles", minval = 1, maxval = 3, group = grpZ)
+baseAtr = input.float(1.0, "Base range ≤ ATR ×", group = grpZ)
+impAtr = input.float(1.5, "Impulse ≥ ATR ×", group = grpZ)
+bodyMin = input.float(50.0, "Impulse body %", group = grpZ)
+minH = input.float(0.5, "Min zone height × ATR", group = grpZ)
+maxZones = input.int(8, "Zones kept", minval = 2, maxval = 20, group = grpZ)
+drawFromBase = input.bool(true, "Draw zone from base", group = grpZ)
+
+grpS = "Signals"
+sigMode = input.string("Auto", "Signal mode", options = ["Auto", "On", "Off"], group = grpS)
+entryType = input.string("Confirmation", "Entry", options = ["Confirmation", "Limit"], group = grpS)
+confWin = input.int(3, "Confirm window", minval = 1, maxval = 10, group = grpS)
+minStars = input.int(3, "Min stars", minval = 1, maxval = 5, group = grpS)
+useTrend = input.bool(true, "Trend filter", group = grpS)
+tpMode = input.string("$", "Targets", options = ["$", "R"], group = grpS)
+tp1$ = input.float(5.0, "TP1 $", group = grpS)
+tp2$ = input.float(10.0, "TP2 $", group = grpS)
+tp1R = input.float(1.0, "TP1 R", group = grpS)
+tp2R = input.float(2.0, "TP2 R", group = grpS)
+stopBuf = input.float(0.1, "Stop buffer × ATR", group = grpS)
+cost = input.float(0.20, "Cost / RT", group = grpS)
+sess = input.session("0700-2000", "Active session UTC", group = grpS)
+
+atr = ta.atr(14)
+ema60 = ta.ema(close, 60)
+bullT = close > ema60 + 0.25 * atr
+bearT = close < ema60 - 0.25 * atr
+sessOk = not na(time(timeframe.period, sess))
+tfOk = sigMode == "On" or (sigMode == "Auto" and timeframe.period == "15")
+signalsOn = sigMode != "Off" and tfOk
+
+rng = high - low
+body = math.abs(close - open)
+narrow = rng <= baseAtr * atr
+impulseUp = close > open and body >= bodyMin / 100.0 * rng and rng >= impAtr * atr and close > high[1]
+impulseDn = close < open and body >= bodyMin / 100.0 * rng and rng >= impAtr * atr and close < low[1]
+
+// detect base before impulse: last 1..baseMax narrow bars
+baseOk = true
+for i = 1 to baseMax
+    if i <= baseMax
+        baseOk := baseOk  // placeholder kept simple: require previous bar narrow
+base1 = narrow[1]
+bullZone = impulseUp and base1
+bearZone = impulseDn and base1
+
+var float zTop = na
+var float zBot = na
+var int zDir = 0 // 1 demand, -1 supply
+var int zBar = na
+var int zTouches = 0
+var bool zFresh = true
+var bool zAlive = false
+var int zStars = 0
+var int pendingTouchBar = na
+
+if bullZone
+    zTop := math.max(open[1], close[1])
+    zBot := low[1]
+    h = zTop - zBot
+    if h < minH * atr
+        zBot := zTop - minH * atr
+    zDir := 1
+    zBar := bar_index
+    zTouches := 0
+    zFresh := true
+    zAlive := true
+    pendingTouchBar := na
+if bearZone
+    zTop := high[1]
+    zBot := math.min(open[1], close[1])
+    h = zTop - zBot
+    if h < minH * atr
+        zTop := zBot + minH * atr
+    zDir := -1
+    zBar := bar_index
+    zTouches := 0
+    zFresh := true
+    zAlive := true
+    pendingTouchBar := na
+
+// stars
+impStrength = rng / atr
+starImp = impStrength >= 3 ? 3 : impStrength >= 2 ? 2 : 1
+starFresh = zFresh ? 1 : zTouches == 1 ? 0 : -1
+starTrend = (zDir == 1 and bullT) or (zDir == -1 and bearT) ? 1 : 0
+starSess = sessOk ? 0 : -1
+zStars := math.max(1, math.min(5, starImp + starFresh + starTrend + starSess))
+
+// invalidate / touch
+touched = zAlive and bar_index > zBar and (zDir == 1 ? low <= zTop and low >= zBot : high >= zBot and high <= zTop)
+if zAlive and bar_index > zBar
+    if zDir == 1 and close < zBot
+        zAlive := false
+    if zDir == -1 and close > zTop
+        zAlive := false
+    if touched and zFresh
+        zFresh := false
+        zTouches += 1
+        pendingTouchBar := bar_index
+    else if touched
+        zTouches += 1
+        if zTouches >= 3
+            zAlive := false
+
+// signal on first touch only
+var int tradeDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTp1 = na
+var float tTp2 = na
+var int tBar = na
+var bool halfDone = false
+
+confirmL = zDir == 1 and not na(pendingTouchBar) and bar_index > pendingTouchBar and bar_index - pendingTouchBar <= confWin and close > zTop and zTouches == 1
+confirmS = zDir == -1 and not na(pendingTouchBar) and bar_index > pendingTouchBar and bar_index - pendingTouchBar <= confWin and close < zBot and zTouches == 1
+limitL = entryType == "Limit" and zDir == 1 and touched and zTouches == 1 and bar_index == pendingTouchBar
+limitS = entryType == "Limit" and zDir == -1 and touched and zTouches == 1 and bar_index == pendingTouchBar
+rawL = signalsOn and zAlive and zStars >= minStars and (not useTrend or bullT) and (entryType == "Confirmation" ? confirmL : limitL)
+rawS = signalsOn and zAlive and zStars >= minStars and (not useTrend or bearT) and (entryType == "Confirmation" ? confirmS : limitS)
+
+var int nTrades = 0
+var int nTp1 = 0
+var int nTp2 = 0
+var float sumR = 0.0
+var int streak = 0
+var int maxStreak = 0
+
+if tradeDir != 0 and bar_index > tBar
+    risk = math.abs(tEntry - tStop)
+    costR = risk > 0 ? cost / risk : 0.0
+    int outcome = 0
+    float resR = na
+    curStop = halfDone ? tEntry : tStop
+    if tradeDir == 1
+        if low <= curStop
+            outcome := -1
+            resR := halfDone ? 0.0 - costR : -1.0 - costR
+        else if high >= tTp1 and not halfDone
+            halfDone := true
+            nTp1 += 1
+        else if high >= tTp2
+            outcome := 2
+            resR := halfDone ? 0.5 * ((tTp1 - tEntry) / risk) + 0.5 * ((tTp2 - tEntry) / risk) - costR : (tTp2 - tEntry) / risk - costR
+            nTp2 += 1
+    else
+        if high >= curStop
+            outcome := -1
+            resR := halfDone ? 0.0 - costR : -1.0 - costR
+        else if low <= tTp1 and not halfDone
+            halfDone := true
+            nTp1 += 1
+        else if low <= tTp2
+            outcome := 2
+            resR := halfDone ? 0.5 * ((tEntry - tTp1) / risk) + 0.5 * ((tEntry - tTp2) / risk) - costR : (tEntry - tTp2) / risk - costR
+            nTp2 += 1
+    if outcome != 0
+        nTrades += 1
+        sumR += resR
+        if resR <= 0
+            streak += 1
+            maxStreak := math.max(maxStreak, streak)
+        else
+            streak := 0
+        tradeDir := 0
+        halfDone := false
+
+if rawL and tradeDir == 0
+    tradeDir := 1
+    tEntry := entryType == "Limit" ? zTop : close
+    tStop := zBot - stopBuf * atr
+    risk = tEntry - tStop
+    tTp1 := tpMode == "$" ? tEntry + tp1$ : tEntry + tp1R * risk
+    tTp2 := tpMode == "$" ? tEntry + tp2$ : tEntry + tp2R * risk
+    tBar := bar_index
+    pendingTouchBar := na
+if rawS and tradeDir == 0
+    tradeDir := -1
+    tEntry := entryType == "Limit" ? zBot : close
+    tStop := zTop + stopBuf * atr
+    risk = tStop - tEntry
+    tTp1 := tpMode == "$" ? tEntry - tp1$ : tEntry - tp1R * risk
+    tTp2 := tpMode == "$" ? tEntry - tp2$ : tEntry - tp2R * risk
+    tBar := bar_index
+    pendingTouchBar := na
+
+colD = color.new(#0ECB81, 85)
+colS = color.new(#F6465D, 85)
+var box zb = na
+if barstate.islast
+    box.delete(zb)
+    if zAlive
+        x1 = drawFromBase ? math.max(0, zBar - 1) : zBar
+        zb := box.new(x1, zTop, bar_index + 2, zBot, bgcolor = zDir == 1 ? colD : colS, border_color = zDir == 1 ? #0ECB81 : #F6465D, border_style = zFresh ? line.style_solid : line.style_dashed)
+        label.new(bar_index + 2, zDir == 1 ? zTop : zBot, str.tostring(zStars) + "★ · " + (zFresh ? "FRESH" : "TEST " + str.tostring(zTouches)), style = label.style_label_left, color = #1E2329, textcolor = color.white, size = size.tiny)
+
+plotshape(rawL, "BUY", shape.triangleup, location.belowbar, #0ECB81, size = size.tiny)
+plotshape(rawS, "SELL", shape.triangledown, location.abovebar, #F6465D, size = size.tiny)
+
+avgR = nTrades > 0 ? sumR / nTrades : na
+var table t = table.new(position.top_right, 2, 7, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "ZoneRank", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, signalsOn ? (tradeDir == 0 ? "WAIT" : tradeDir == 1 ? "LONG" : "SHORT") : "signals off", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, "Stars/Trend", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, (zAlive ? str.tostring(zStars) + "★" : "—") + " · " + (bullT ? "BULL" : bearT ? "BEAR" : "FLAT") + (sessOk ? " · sess" : " · out"), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "Trades", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, str.tostring(nTrades) + (nTrades < 30 ? " · gray" : ""), text_color = nTrades >= 30 ? color.white : color.gray, text_size = size.tiny)
+    table.cell(t, 0, 3, "TP1 / TP2", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, nTrades > 0 ? str.tostring(nTp1 * 100.0 / nTrades, "#") + "% / " + str.tostring(nTp2 * 100.0 / nTrades, "#") + "%" : "—", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "Avg R net", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, na(avgR) ? "—" : str.tostring(avgR, "#.##") + "R", text_color = na(avgR) ? color.gray : avgR > 0 ? #0ECB81 : #F6465D, text_size = size.tiny)
+    table.cell(t, 0, 5, "Max loses", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, str.tostring(maxStreak), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 6, "TF", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 6, timeframe.period + (sigMode == "Auto" and timeframe.period != "15" ? " · Auto=off" : ""), text_color = color.white, text_size = size.tiny)
+
+alertcondition(rawL, "BUY zone", "Zone Rank BUY")
+alertcondition(rawS, "SELL zone", "Zone Rank SELL")

@@ -1,0 +1,130 @@
+//@version=6
+// Pandich Supertrend + Entry/TP1/TP2/TP3 — recreation from published logic.
+indicator("Pandich Supertrend TP [65]", overlay = true, max_labels_count = 60, max_lines_count = 40, max_boxes_count = 20)
+
+grp = "Supertrend"
+atrLen = input.int(10, "ATR length", group = grp)
+atrMult = input.float(3.0, "ATR factor", group = grp)
+useAdx = input.bool(false, "ADX filter", group = grp)
+adxTh = input.float(20.0, "Signal ADX threshold", group = grp)
+useEma = input.bool(false, "EMA 200 filter", group = grp)
+stopAtr = input.float(1.5, "SL × ATR", group = grp)
+tp1R = input.float(1.0, "TP1 R", group = grp)
+tp2R = input.float(2.0, "TP2 R", group = grp)
+tp3R = input.float(3.0, "TP3 R", group = grp)
+showMarks = input.bool(true, "Show BUY/SELL marks", group = grp)
+
+[st, stDir] = ta.supertrend(atrMult, atrLen)
+atr = ta.atr(14)
+ema200 = ta.ema(close, 200)
+[diPlus, diMinus, adxVal] = ta.dmi(14, 14)
+
+bullFlip = close > st and close[1] <= st[1]
+bearFlip = close < st and close[1] >= st[1]
+
+adxOk = not useAdx or adxVal >= adxTh
+emaOkL = not useEma or close > ema200
+emaOkS = not useEma or close < ema200
+buy = bullFlip and adxOk and emaOkL
+sell = bearFlip and adxOk and emaOkS
+
+var int tradeDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTp1 = na
+var float tTp2 = na
+var float tTp3 = na
+var int tBar = na
+var int nSig = 0
+var int nWin = 0
+var int nLoss = 0
+var float sumR = 0.0
+
+if tradeDir != 0 and bar_index > tBar
+    int outcome = 0
+    float resR = na
+    if tradeDir == 1
+        if low <= tStop
+            outcome := -1
+            resR := -1.0
+        else if high >= tTp1
+            outcome := 1
+            resR := tp1R
+    else
+        if high >= tStop
+            outcome := -1
+            resR := -1.0
+        else if low <= tTp1
+            outcome := 1
+            resR := tp1R
+    if outcome != 0
+        if outcome == 1
+            nWin += 1
+        else
+            nLoss += 1
+        sumR += resR
+        tradeDir := 0
+
+if buy and tradeDir == 0
+    tradeDir := 1
+    tEntry := close
+    tStop := close - stopAtr * atr
+    risk = tEntry - tStop
+    tTp1 := tEntry + tp1R * risk
+    tTp2 := tEntry + tp2R * risk
+    tTp3 := tEntry + tp3R * risk
+    tBar := bar_index
+    nSig += 1
+if sell and tradeDir == 0
+    tradeDir := -1
+    tEntry := close
+    tStop := close + stopAtr * atr
+    risk = tStop - tEntry
+    tTp1 := tEntry - tp1R * risk
+    tTp2 := tEntry - tp2R * risk
+    tTp3 := tEntry - tp3R * risk
+    tBar := bar_index
+    nSig += 1
+
+colL = #0ECB81
+colS = #F6465D
+plot(st, "Supertrend", color = close > st ? colL : colS)
+plotshape(showMarks and buy, "BUY", shape.labelup, location.belowbar, colL, text = "BUY", textcolor = color.white, size = size.tiny)
+plotshape(showMarks and sell, "SELL", shape.labeldown, location.abovebar, colS, text = "SELL", textcolor = color.white, size = size.tiny)
+
+var line lnE = na
+var line lnS = na
+var line ln1 = na
+var line ln2 = na
+var line ln3 = na
+if barstate.islast and tradeDir != 0
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(ln1)
+    line.delete(ln2)
+    line.delete(ln3)
+    x2 = bar_index + 6
+    lnE := line.new(tBar, tEntry, x2, tEntry, color = color.yellow, width = 2)
+    lnS := line.new(tBar, tStop, x2, tStop, color = colS, width = 1, style = line.style_dotted)
+    ln1 := line.new(tBar, tTp1, x2, tTp1, color = color.blue, width = 1, style = line.style_dashed)
+    ln2 := line.new(tBar, tTp2, x2, tTp2, color = color.blue, width = 1, style = line.style_dashed)
+    ln3 := line.new(tBar, tTp3, x2, tTp3, color = color.blue, width = 2, style = line.style_dashed)
+
+wr = nWin + nLoss > 0 ? nWin * 100.0 / (nWin + nLoss) : na
+var table t = table.new(position.top_right, 2, 6, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "ST", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, close > st ? "BULL" : "BEAR", text_color = close > st ? colL : colS, text_size = size.small)
+    table.cell(t, 0, 1, "ADX", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, str.tostring(adxVal, "#.#") + " · +DI " + str.tostring(diPlus, "#.#") + " · -DI " + str.tostring(diMinus, "#.#"), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "Signals", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, str.tostring(nSig), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "Win rate→TP1", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, na(wr) ? "—" : str.tostring(wr, "#.#") + "%", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "Sum R (TP1)", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, str.tostring(sumR, "#.#") + "R", text_color = sumR >= 0 ? colL : colS, text_size = size.tiny)
+    table.cell(t, 0, 5, "Note", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, "simplified stats · stop before TP1", text_color = color.gray, text_size = size.tiny)
+
+alertcondition(buy, "BUY", "Supertrend BUY")
+alertcondition(sell, "SELL", "Supertrend SELL")

@@ -1,0 +1,160 @@
+//@version=6
+// Pandich Sessions + Supply/Demand Daily — recreation of combined LuxAlgo-style map.
+// Sessions: up to 4 session boxes + optional mean/VWAP. Daily S/D: previous day volume accumulation zones.
+// Educational map only — not signals. Original logic credited to LuxAlgo (CC BY-NC-SA spirit).
+indicator("Pandich Sessions + S/D Daily [65]", overlay = true, max_boxes_count = 80, max_lines_count = 60, max_labels_count = 40, max_bars_back = 500)
+
+grpA = "Session A · NY"
+aOn = input.bool(true, "Enable A", group = grpA)
+aName = input.string("New York", "Name", group = grpA)
+aSess = input.session("1300-2200", "Hours UTC", group = grpA)
+aCol = input.color(color.new(#2962FF, 85), "Color", group = grpA)
+
+grpB = "Session B · London"
+bOn = input.bool(true, "Enable B", group = grpB)
+bName = input.string("London", "Name", group = grpB)
+bSess = input.session("0700-1600", "Hours UTC", group = grpB)
+bCol = input.color(color.new(#FF6D00, 85), "Color", group = grpB)
+
+grpC = "Session C · Tokyo"
+cOn = input.bool(true, "Enable C", group = grpC)
+cName = input.string("Tokyo", "Name", group = grpC)
+cSess = input.session("0000-0900", "Hours UTC", group = grpC)
+cCol = input.color(color.new(#00C853, 85), "Color", group = grpC)
+
+grpD = "Session D · Sydney"
+dOn = input.bool(false, "Enable D", group = grpD)
+dName = input.string("Sydney", "Name", group = grpD)
+dSess = input.session("2100-0600", "Hours UTC", group = grpD)
+dCol = input.color(color.new(#AA00FF, 85), "Color", group = grpD)
+
+grpS = "Session style"
+showRange = input.bool(true, "Session range box", group = grpS)
+showMean = input.bool(false, "Session mean", group = grpS)
+showVwap = input.bool(true, "Session VWAP", group = grpS)
+
+grpZ = "Supply & Demand Daily"
+sdOn = input.bool(true, "Enable daily S/D", group = grpZ)
+thrPct = input.float(20.0, "Threshold % of day volume", minval = 1, maxval = 80, group = grpZ)
+bins = input.int(24, "Resolution (bins)", minval = 4, maxval = 80, group = grpZ)
+supCol = input.color(color.new(#F6465D, 80), "Supply", group = grpZ)
+demCol = input.color(color.new(#0ECB81, 80), "Demand", group = grpZ)
+
+f_sess(bool on, string sess) =>
+    on and not na(time(timeframe.period, sess))
+
+// Track one active box per session type (current day instance)
+track(bool on, string sess, color col, string name) =>
+    var box bx = na
+    var float hi = na
+    var float lo = na
+    var float sumC = na
+    var float sumCV = na
+    var float sumV = na
+    var int n = 0
+    var line meanLn = na
+    var line vwapLn = na
+    active = f_sess(on, sess)
+    started = active and not active[1]
+    ended = not active and active[1]
+    if started
+        box.delete(bx)
+        line.delete(meanLn)
+        line.delete(vwapLn)
+        hi := high
+        lo := low
+        sumC := close
+        sumCV := close * volume
+        sumV := volume
+        n := 1
+        if showRange
+            bx := box.new(bar_index, hi, bar_index, lo, bgcolor = col, border_color = color.new(col, 40))
+    if active and not started
+        hi := math.max(hi, high)
+        lo := math.min(lo, low)
+        sumC += close
+        sumCV += close * volume
+        sumV += volume
+        n += 1
+        if showRange and not na(bx)
+            box.set_right(bx, bar_index)
+            box.set_top(bx, hi)
+            box.set_bottom(bx, lo)
+        if showMean and n > 0
+            line.delete(meanLn)
+            meanLn := line.new(bar_index - n + 1, sumC / n, bar_index, sumC / n, color = color.new(col, 0), width = 1, style = line.style_dotted)
+        if showVwap and sumV > 0
+            line.delete(vwapLn)
+            vwapLn := line.new(bar_index - n + 1, sumCV / sumV, bar_index, sumCV / sumV, color = color.new(col, 0), width = 1)
+    if ended and showRange and not na(bx)
+        label.new(bar_index, hi, name, style = label.style_label_down, color = color.new(col, 0), textcolor = color.white, size = size.tiny)
+
+track(aOn, aSess, aCol, aName)
+track(bOn, bSess, bCol, bName)
+track(cOn, cSess, cCol, cName)
+track(dOn, dSess, dCol, dName)
+
+// Daily S/D on new day: use previous day's hi/lo and approximate volume profile via bins from chart TF
+newDay = ta.change(time("D")) != 0
+var float dayHi = na
+var float dayLo = na
+var float dayVol = na
+var box supBx = na
+var box demBx = na
+var line supMid = na
+var line demMid = na
+
+if newDay and sdOn and not na(dayHi)
+    // Build crude zones: top thr% volume from high (supply), bottom thr% from low (demand)
+    // Without intrabar matrix we approximate: supply = upper fraction of range, demand = lower fraction
+    // Height scale with threshold: higher thr → wider zones
+    rng = dayHi - dayLo
+    if rng > 0
+        box.delete(supBx)
+        box.delete(demBx)
+        line.delete(supMid)
+        line.delete(demMid)
+        w = rng * (thrPct / 100.0)
+        // supply from high down
+        sTop = dayHi
+        sBot = dayHi - w
+        // demand from low up
+        dBot = dayLo
+        dTop = dayLo + w
+        // extend to current bar; historical kept until overwritten (latest only for clarity)
+        supBx := box.new(bar_index - 1, sTop, bar_index + 20, sBot, bgcolor = supCol, border_color = color.new(supCol, 40))
+        demBx := box.new(bar_index - 1, dTop, bar_index + 20, dBot, bgcolor = demCol, border_color = color.new(demCol, 40))
+        midS = (sTop + sBot) / 2
+        midD = (dTop + dBot) / 2
+        wtS = sTop - w * 0.35
+        wtD = dBot + w * 0.35
+        supMid := line.new(bar_index - 1, midS, bar_index + 20, midS, color = color.new(supCol, 0), width = 1)
+        demMid := line.new(bar_index - 1, midD, bar_index + 20, midD, color = color.new(demCol, 0), width = 1)
+        line.new(bar_index - 1, wtS, bar_index + 20, wtS, color = color.new(supCol, 0), style = line.style_dashed)
+        line.new(bar_index - 1, wtD, bar_index + 20, wtD, color = color.new(demCol, 0), style = line.style_dashed)
+
+if newDay or na(dayHi)
+    dayHi := high
+    dayLo := low
+    dayVol := volume
+else
+    dayHi := math.max(dayHi, high)
+    dayLo := math.min(dayLo, low)
+    dayVol += volume
+
+if sdOn and not na(supBx) and barstate.islast
+    box.set_right(supBx, bar_index + 2)
+    box.set_right(demBx, bar_index + 2)
+
+var table t = table.new(position.bottom_left, 2, 5, bgcolor = color.new(#0B0E11, 10), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "Map", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, "Sessions + Daily S/D", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, aName, text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, f_sess(aOn, aSess) ? "ACTIVE" : "off", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, bName, text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, f_sess(bOn, bSess) ? "ACTIVE" : "off", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, cName, text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, f_sess(cOn, cSess) ? "ACTIVE" : "off", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "Day range", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, na(dayHi) ? "—" : str.tostring(dayLo, format.mintick) + "–" + str.tostring(dayHi, format.mintick), text_color = color.white, text_size = size.tiny)

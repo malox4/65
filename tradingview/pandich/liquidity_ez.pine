@@ -1,0 +1,146 @@
+//@version=6
+// Pandich Liquidity EZ — recreation from published intent + status panel cues.
+// Distinguishes stop-hunt sweep (wick beyond swing, close back) vs real breakout (close beyond).
+// Risk model default: SL 1.5 ATR / TP 3R. Quality score blends wick dominance, volume, session, vola.
+indicator("Pandich Liquidity EZ [65]", overlay = true, max_labels_count = 60, max_lines_count = 40, max_boxes_count = 20)
+
+grp = "Logic"
+swingN = input.int(20, "Swing lookback", minval = 5, group = grp)
+volMult = input.float(1.2, "Volume × SMA", group = grp)
+minWick = input.float(55.0, "Sweep wick % of range", group = grp)
+stopAtr = input.float(1.5, "SL × ATR", group = grp)
+tpR = input.float(3.0, "TP R", group = grp)
+horizon = input.int(40, "Max bars", group = grp)
+cost = input.float(0.30, "Cost", group = grp)
+sess = input.session("0700-1600", "London-ish session UTC", group = grp)
+
+atr = ta.atr(14)
+volSma = ta.sma(volume, 20)
+rng = math.max(high - low, syminfo.mintick)
+upW = (high - math.max(open, close)) / rng * 100.0
+loW = (math.min(open, close) - low) / rng * 100.0
+priorHi = ta.highest(high[1], swingN)
+priorLo = ta.lowest(low[1], swingN)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+biasBull = ema20 > ema50
+sessOk = not na(time(timeframe.period, sess))
+atrPct = atr / close * 100.0
+volaLow = atrPct < ta.sma(atrPct, 50)
+
+// States
+sweepWickL = low < priorLo and close > priorLo and loW >= minWick
+sweepWickS = high > priorHi and close < priorHi and upW >= minWick
+breakoutL = close > priorHi and close[1] <= priorHi
+breakoutS = close < priorLo and close[1] >= priorLo
+hiVol = volume > volSma * volMult
+
+// Quality 0..100
+q = 50.0
+q += sweepWickL or sweepWickS ? 15 : 0
+q += hiVol ? 10 : -5
+q += sessOk ? 10 : -5
+q += volaLow ? -10 : 8
+q += (sweepWickL and biasBull) or (sweepWickS and not biasBull) ? 12 : 0
+q += math.min(20, math.max(loW, upW) - 40) * 0.4
+quality = math.max(0, math.min(100, q))
+
+sigL = sweepWickL and hiVol and quality >= 60 and not breakoutS
+sigS = sweepWickS and hiVol and quality >= 60 and not breakoutL
+
+var int tradeDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTp = na
+var int tBar = na
+var string sweepState = "IDLE"
+var string signalState = "WAITING"
+
+var int nTrades = 0
+var float sumR = 0.0
+
+if sweepWickL or sweepWickS
+    sweepState := "SWEEP"
+else if breakoutL or breakoutS
+    sweepState := "BREAKOUT"
+else
+    sweepState := "IDLE"
+
+if tradeDir != 0 and bar_index > tBar
+    risk = math.abs(tEntry - tStop)
+    costR = risk > 0 ? cost / risk : 0.0
+    int outcome = 0
+    float resR = na
+    if tradeDir == 1
+        if low <= tStop
+            outcome := -1
+            resR := -1 - costR
+        else if high >= tTp
+            outcome := 1
+            resR := tpR - costR
+        else if bar_index - tBar >= horizon
+            outcome := 2
+            resR := (close - tEntry) / risk - costR
+    else
+        if high >= tStop
+            outcome := -1
+            resR := -1 - costR
+        else if low <= tTp
+            outcome := 1
+            resR := tpR - costR
+        else if bar_index - tBar >= horizon
+            outcome := 2
+            resR := (tEntry - close) / risk - costR
+    if outcome != 0
+        nTrades += 1
+        sumR += resR
+        tradeDir := 0
+        signalState := "WAITING"
+
+if sigL and tradeDir == 0
+    tradeDir := 1
+    tEntry := close
+    tStop := close - stopAtr * atr
+    tTp := close + tpR * (tEntry - tStop)
+    tBar := bar_index
+    signalState := "LONG"
+if sigS and tradeDir == 0
+    tradeDir := -1
+    tEntry := close
+    tStop := close + stopAtr * atr
+    tTp := close - tpR * (tStop - tEntry)
+    tBar := bar_index
+    signalState := "SHORT"
+
+colL = #0ECB81
+colS = #F6465D
+plotshape(sigL, "Sweep long", shape.triangleup, location.belowbar, colL, size = size.tiny)
+plotshape(sigS, "Sweep short", shape.triangledown, location.abovebar, colS, size = size.tiny)
+plotshape(breakoutL, "BO up", shape.diamond, location.abovebar, color.new(color.blue, 40), size = size.tiny)
+plotshape(breakoutS, "BO dn", shape.diamond, location.belowbar, color.new(color.blue, 40), size = size.tiny)
+
+avgR = nTrades > 0 ? sumR / nTrades : na
+riskState = volaLow ? "LOW VOL" : atrPct > ta.sma(atrPct, 50) * 1.5 ? "HIGH VOL" : "NORMAL"
+var table t = table.new(position.top_right, 2, 9, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "Liquidity EZ", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, "Simulation ON", text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, "Risk model", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, "SL " + str.tostring(stopAtr, "#.#") + " ATR / TP " + str.tostring(tpR, "#.#") + "R", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "Bias", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, biasBull ? "BULLISH" : "BEARISH", text_color = biasBull ? colL : colS, text_size = size.tiny)
+    table.cell(t, 0, 3, "Sweep state", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, sweepState, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "Signal", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, signalState, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 5, "Quality", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, str.tostring(quality, "#.##"), text_color = quality >= 70 ? colL : quality >= 50 ? color.yellow : colS, text_size = size.tiny)
+    table.cell(t, 0, 6, "Volatility", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 6, volaLow ? "LOW" : "OK", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 7, "Session", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 7, sessOk ? "ACTIVE" : "OFF", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 8, "Avg R / risk", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 8, (na(avgR) ? "—" : str.tostring(avgR, "#.##") + "R") + " · " + riskState + " · n=" + str.tostring(nTrades), text_color = color.white, text_size = size.tiny)
+
+alertcondition(sigL, "EZ long", "Liquidity EZ long")
+alertcondition(sigS, "EZ short", "Liquidity EZ short")

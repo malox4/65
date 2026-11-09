@@ -1,0 +1,79 @@
+//@version=6
+// Pandich Buy Sell V1 — recreation: ZigZag turn points with confirmation marker (no trade engine).
+// Labels at swing extreme (hindsight for reading); marker on the bar the turn became known.
+indicator("Pandich Buy Sell V1 [65]", overlay = true, max_labels_count = 200, max_lines_count = 20)
+
+depth = input.int(30, "ZigZag depth", minval = 5, maxval = 100)
+deviation = input.float(5.0, "Deviation %", minval = 0.1, step = 0.1)
+backstep = input.int(5, "Backstep", minval = 1, maxval = 30)
+repaint = input.bool(false, "Repaint Mode (structure study only)")
+lblSize = input.string("tiny", "Label size", options = ["tiny", "small", "normal"])
+
+atr = ta.atr(14)
+hh = ta.highest(high, depth)
+ll = ta.lowest(low, depth)
+barsSinceHH = ta.barssince(high == hh) // approximate
+barsSinceLL = ta.barssince(low == ll)
+
+var int leg = 0
+var float curExt = na
+var int curExtBar = na
+var float lastHi = na
+var float lastLo = na
+var int lastHiBar = na
+var int lastLoBar = na
+
+bool flipUp = false
+bool flipDn = false
+
+// Direction by which extreme is more recent within depth window
+upBias = ta.highestbars(high, depth) >= ta.lowestbars(low, depth)
+if na(curExt)
+    curExt := close
+    curExtBar := bar_index
+    leg := upBias ? 1 : -1
+
+minMove = math.max(curExt * deviation / 100.0, atr * 0.25)
+
+if leg == 1
+    if high >= curExt
+        curExt := high
+        curExtBar := bar_index
+    if low <= curExt - minMove and bar_index - curExtBar >= backstep
+        // up leg complete → Sell-point at previous extreme
+        lastHi := curExt
+        lastHiBar := curExtBar
+        flipDn := true
+        curExt := low
+        curExtBar := bar_index
+        leg := -1
+else
+    if low <= curExt
+        curExt := low
+        curExtBar := bar_index
+    if high >= curExt + minMove and bar_index - curExtBar >= backstep
+        lastLo := curExt
+        lastLoBar := curExtBar
+        flipUp := true
+        curExt := high
+        curExtBar := bar_index
+        leg := 1
+
+sz = lblSize == "small" ? size.small : lblSize == "normal" ? size.normal : size.tiny
+colL = #0ECB81
+colS = #F6465D
+
+// Confirmation marker on flip bar (when turn is known)
+plotshape(flipUp, title = "Buy confirm", style = shape.circle, location = location.belowbar, color = colL, size = size.tiny)
+plotshape(flipDn, title = "Sell confirm", style = shape.circle, location = location.abovebar, color = colS, size = size.tiny)
+
+if flipUp and not na(lastLo)
+    label.new(lastLoBar, lastLo, "Buy-point", style = label.style_label_up, color = color.new(colL, 20), textcolor = color.white, size = sz)
+if flipDn and not na(lastHi)
+    label.new(lastHiBar, lastHi, "Sell-point", style = label.style_label_down, color = color.new(colS, 20), textcolor = color.white, size = sz)
+
+// Live repaint preview of current extreme
+plot(repaint ? curExt : na, "Live extreme", color = color.new(color.orange, 40), style = plot.style_linebr)
+
+alertcondition(flipUp, title = "Bottom confirmed (Buy-point)", message = "Buy-point confirmed")
+alertcondition(flipDn, title = "Top confirmed (Sell-point)", message = "Sell-point confirmed")
