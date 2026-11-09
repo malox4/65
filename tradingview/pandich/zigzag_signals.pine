@@ -1,0 +1,161 @@
+//@version=6
+// Pandich ZigZag Signals — recreation from published logic.
+// Signal on confirming close away from swing extreme (no repaint). Entry=close, stop beyond extreme, TP1 1R + BE.
+indicator("Pandich ZigZag Signals [65]", overlay = true, max_labels_count = 120, max_lines_count = 60, max_boxes_count = 30)
+
+grpE = "Engine"
+engine = input.string("ATR zigzag", "Engine", options = ["ATR zigzag", "Pivots"], group = grpE)
+atrLen = input.int(14, "ATR", group = grpE)
+thrAtr = input.float(6.0, "Threshold × ATR", minval = 0.5, step = 0.5, group = grpE)
+thrMin = input.float(1.0, "Min threshold (price)", minval = 0.0, step = 0.1, group = grpE)
+pivL = input.int(5, "Pivot left", minval = 1, group = grpE)
+pivR = input.int(2, "Pivot right", minval = 1, group = grpE)
+
+grpR = "Risk"
+stopMode = input.string("Beyond extreme", "Stop mode", options = ["Beyond extreme", "Fixed ATR"], group = grpR)
+stopBuf = input.float(0.1, "Stop buffer × ATR", group = grpR)
+stopAtr = input.float(1.5, "Fixed stop × ATR", group = grpR)
+tp1R = input.float(1.0, "TP1 R", group = grpR)
+shareTp1 = input.float(50.0, "Close at TP1 %", minval = 0, maxval = 100, group = grpR)
+useBE = input.bool(true, "Break-even after TP1", group = grpR)
+tp2Mode = input.string("Opposite signal", "TP2 mode", options = ["Opposite signal", "Fixed R"], group = grpR)
+tp2R = input.float(3.0, "Fixed TP2 R", group = grpR)
+cost = input.float(0.30, "Cost / round trip", minval = 0.0, step = 0.01, group = grpR)
+
+atr = ta.atr(atrLen)
+thr = math.max(atr * thrAtr, thrMin)
+ph = ta.pivothigh(high, pivL, pivR)
+pl = ta.pivotlow(low, pivL, pivR)
+
+var float ext = na
+var int leg = 0
+bool buySig = false
+bool sellSig = false
+float sigExt = na
+
+if engine == "ATR zigzag"
+    if na(ext)
+        ext := close
+        leg := 0
+    if leg == 0
+        if high >= low
+            ext := high
+            leg := 1
+    else if leg == 1
+        ext := math.max(ext, high)
+        if close <= ext - thr
+            sellSig := true
+            sigExt := ext
+            ext := low
+            leg := -1
+    else
+        ext := math.min(ext, low)
+        if close >= ext + thr
+            buySig := true
+            sigExt := ext
+            ext := high
+            leg := 1
+else
+    if not na(pl)
+        buySig := true
+        sigExt := pl
+    if not na(ph)
+        sellSig := true
+        sigExt := ph
+
+var int tradeDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTp1 = na
+var float tTp2 = na
+var int tBar = na
+var bool tp1Done = false
+
+var int nTrades = 0
+var int nWin = 0
+var float sumR = 0.0
+
+// manage open trade
+if tradeDir != 0 and bar_index > tBar
+    risk0 = math.abs(tEntry - tStop)
+    costR = risk0 > 0 ? cost / risk0 : 0.0
+    curStop = tp1Done and useBE ? tEntry : tStop
+    int outcome = 0
+    float resR = na
+    if tradeDir == 1
+        if low <= curStop
+            outcome := -1
+            resR := tp1Done ? (shareTp1 / 100.0) * (tp1R - costR) : -1.0 - costR
+        else if high >= tTp1 and not tp1Done
+            tp1Done := true
+            if shareTp1 >= 100
+                outcome := 1
+                resR := tp1R - costR
+        else if tp2Mode == "Fixed R" and high >= tTp2
+            outcome := 2
+            resR := tp1Done ? (shareTp1 / 100.0) * (tp1R - costR) + (1 - shareTp1 / 100.0) * (tp2R - costR) : tp2R - costR
+    else
+        if high >= curStop
+            outcome := -1
+            resR := tp1Done ? (shareTp1 / 100.0) * (tp1R - costR) : -1.0 - costR
+        else if low <= tTp1 and not tp1Done
+            tp1Done := true
+            if shareTp1 >= 100
+                outcome := 1
+                resR := tp1R - costR
+        else if tp2Mode == "Fixed R" and low <= tTp2
+            outcome := 2
+            resR := tp1Done ? (shareTp1 / 100.0) * (tp1R - costR) + (1 - shareTp1 / 100.0) * (tp2R - costR) : tp2R - costR
+    // opposite signal exit
+    if outcome == 0 and ((tradeDir == 1 and sellSig) or (tradeDir == -1 and buySig))
+        moveR = tradeDir == 1 ? (close - tEntry) / risk0 : (tEntry - close) / risk0
+        outcome := 4
+        resR := tp1Done ? (shareTp1 / 100.0) * (tp1R - costR) + (1 - shareTp1 / 100.0) * (moveR - costR) : moveR - costR
+    if outcome != 0
+        nTrades += 1
+        sumR += resR
+        if resR > 0
+            nWin += 1
+        tradeDir := 0
+        tp1Done := false
+
+if buySig and tradeDir == 0 and not na(sigExt)
+    tradeDir := 1
+    tEntry := close
+    tStop := stopMode == "Beyond extreme" ? sigExt - stopBuf * atr : close - stopAtr * atr
+    risk = math.max(tEntry - tStop, syminfo.mintick)
+    tTp1 := tEntry + tp1R * risk
+    tTp2 := tEntry + tp2R * risk
+    tBar := bar_index
+    tp1Done := false
+if sellSig and tradeDir == 0 and not na(sigExt)
+    tradeDir := -1
+    tEntry := close
+    tStop := stopMode == "Beyond extreme" ? sigExt + stopBuf * atr : close + stopAtr * atr
+    risk = math.max(tStop - tEntry, syminfo.mintick)
+    tTp1 := tEntry - tp1R * risk
+    tTp2 := tEntry - tp2R * risk
+    tBar := bar_index
+    tp1Done := false
+
+colL = #0ECB81
+colS = #F6465D
+plotshape(buySig, "BUY", shape.labelup, location.belowbar, colL, text = "BUY", textcolor = color.white, size = size.tiny)
+plotshape(sellSig, "SELL", shape.labeldown, location.abovebar, colS, text = "SELL", textcolor = color.white, size = size.tiny)
+
+avgR = nTrades > 0 ? sumR / nTrades : na
+var table t = table.new(position.top_right, 2, 5, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "ZigZag", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, tradeDir == 0 ? "WAIT" : tradeDir == 1 ? "LONG" : "SHORT", text_color = color.white, text_size = size.normal)
+    table.cell(t, 0, 1, "Trades", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, str.tostring(nTrades), text_color = nTrades >= 100 ? color.white : color.gray, text_size = size.tiny)
+    table.cell(t, 0, 2, "Win %", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, nTrades > 0 ? str.tostring(nWin * 100.0 / nTrades, "#.#") + "%" : "—", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "Avg R net", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, na(avgR) ? "—" : str.tostring(avgR, "#.##") + "R", text_color = na(avgR) ? color.gray : avgR > 0 ? colL : colS, text_size = size.tiny)
+    table.cell(t, 0, 4, "Next", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, leg == 1 ? str.tostring(ext - thr, format.mintick) : leg == -1 ? str.tostring(ext + thr, format.mintick) : "—", text_color = color.white, text_size = size.tiny)
+
+alertcondition(buySig, "BUY", "ZigZag BUY")
+alertcondition(sellSig, "SELL", "ZigZag SELL")

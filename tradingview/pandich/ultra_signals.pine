@@ -1,0 +1,215 @@
+//@version=6
+// Pandich Ultra Signals — recreation: RSI + Heikin Ashi Trend modules, ATR/swing stop, TP1–3R,
+// BE / stepped / ATR trail, expectancy after costs. Presets approximate published XAU sets.
+indicator("Pandich Ultra Signals [65]", overlay = true, max_labels_count = 80, max_lines_count = 50, max_boxes_count = 30)
+
+grp = "Preset"
+preset = input.string("Auto", "Preset", options = ["Auto", "Scalp XAU", "Best in test", "Single+trail", "Manual"], group = grp)
+
+grpM = "Modules"
+useRsi = input.bool(true, "RSI module", group = grpM)
+rsiMode = input.string("Trend", "RSI mode", options = ["Trend", "Counter"], group = grpM)
+rsiLen = input.int(14, "RSI length", group = grpM)
+rsiHi = input.float(60.0, "RSI upper", group = grpM)
+rsiLo = input.float(40.0, "RSI lower", group = grpM)
+useHa = input.bool(true, "Heikin Ashi Trend", group = grpM)
+haN = input.int(3, "HA same-color N", minval = 2, maxval = 10, group = grpM)
+haWick = input.float(50.0, "Max opposite wick % of body", group = grpM)
+needBoth = input.bool(false, "Require both modules", group = grpM)
+useEma = input.bool(true, "EMA filter", group = grpM)
+emaLen = input.int(200, "EMA length", group = grpM)
+reverseOn = input.bool(false, "Reverse closes trade", group = grpM)
+
+grpR = "Risk / manage"
+stopType = input.string("ATR", "Stop type", options = ["ATR", "Swing"], group = grpR)
+atrK = input.float(2.0, "Stop × ATR", group = grpR)
+swingN = input.int(5, "Swing lookback", group = grpR)
+stopBuf = input.float(0.2, "Swing buffer × ATR", group = grpR)
+tp1R = input.float(1.0, "TP1 R", group = grpR)
+tp2R = input.float(2.0, "TP2 R", group = grpR)
+tp3R = input.float(3.0, "TP3 R", group = grpR)
+mgmt = input.string("Break-even after TP1", "Management", options = ["None", "Break-even after TP1", "Stepped", "ATR trail after TP1"], group = grpR)
+trailAtr = input.float(1.0, "Trail × ATR", group = grpR)
+cost = input.float(0.0, "Spread+commission", group = grpR)
+statN = input.int(100, "Stats last N (0=all)", minval = 0, group = grpR)
+
+// Preset overrides (approximate)
+tfMin = timeframe.in_seconds() / 60.0
+isGoldish = str.contains(syminfo.ticker, "XAU") or str.contains(syminfo.ticker, "GOLD")
+effPreset = preset == "Auto" ? (isGoldish and tfMin <= 4 ? "Scalp XAU" : isGoldish and tfMin <= 14 ? "Scalp XAU" : "Best in test") : preset
+effUseHa = effPreset == "Best in test" or effPreset == "Single+trail" ? true : useHa
+effUseRsi = effPreset == "Scalp XAU" ? true : useRsi
+effRsiMode = effPreset == "Scalp XAU" ? "Trend" : rsiMode
+effAtrK = effPreset == "Scalp XAU" or effPreset == "Best in test" or effPreset == "Single+trail" ? 2.0 : atrK
+effTp1 = effPreset == "Scalp XAU" and tfMin <= 4 ? 0.5 : effPreset == "Scalp XAU" ? 0.42 : tp1R
+effTp2 = effPreset == "Scalp XAU" and tfMin <= 4 ? 1.0 : effPreset == "Scalp XAU" ? 0.83 : tp2R
+effTp3 = effPreset == "Scalp XAU" and tfMin <= 4 ? 1.5 : effPreset == "Scalp XAU" ? 1.25 : tp3R
+effUseEma = effPreset == "Best in test" or effPreset == "Single+trail" ? true : useEma
+effMgmt = effPreset == "Single+trail" ? "ATR trail after TP1" : effPreset == "Scalp XAU" or effPreset == "Best in test" ? "Break-even after TP1" : mgmt
+
+atr = ta.atr(14)
+ema = ta.ema(close, emaLen)
+rsi = ta.rsi(close, rsiLen)
+[macdLine, sigLine, _] = ta.macd(close, 12, 26, 9)
+
+rsiBuy = effUseRsi and (effRsiMode == "Trend" ? ta.crossover(rsi, rsiHi) : ta.crossover(rsi, rsiLo))
+rsiSell = effUseRsi and (effRsiMode == "Trend" ? ta.crossunder(rsi, rsiLo) : ta.crossunder(rsi, rsiHi))
+
+haClose = (open + high + low + close) / 4.0
+var float haOpenV = na
+haOpenV := na(haOpenV[1]) ? (open + close) / 2.0 : (haOpenV[1] + haClose[1]) / 2.0
+haBull = haClose > haOpenV
+haBear = haClose < haOpenV
+haBody = math.abs(haClose - haOpenV)
+haUpW = high - math.max(haOpenV, haClose)
+haLoW = math.min(haOpenV, haClose) - low
+haOppOkL = haBody > 0 and haUpW / haBody * 100.0 <= haWick
+haOppOkS = haBody > 0 and haLoW / haBody * 100.0 <= haWick
+haRunL = haBull and haOppOkL
+haRunS = haBear and haOppOkS
+var int haCntL = 0
+var int haCntS = 0
+haCntL := haRunL ? haCntL + 1 : 0
+haCntS := haRunS ? haCntS + 1 : 0
+haBuy = effUseHa and haCntL == haN and rsi > 50 and macdLine > sigLine
+haSell = effUseHa and haCntS == haN and rsi < 50 and macdLine < sigLine
+
+modL = needBoth ? (rsiBuy and haBuy) : ((effUseRsi and rsiBuy) or (effUseHa and haBuy))
+modS = needBoth ? (rsiSell and haSell) : ((effUseRsi and rsiSell) or (effUseHa and haSell))
+emaOkL = not effUseEma or close > ema
+emaOkS = not effUseEma or close < ema
+sigL = modL and emaOkL
+sigS = modS and emaOkS
+
+var int tradeDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTp1 = na
+var float tTp2 = na
+var float tTp3 = na
+var int tBar = na
+var bool tp1Hit = false
+var bool tp2Hit = false
+var float trail = na
+
+var int nTrades = 0
+var int nTp1 = 0
+var int nTp2 = 0
+var int nTp3 = 0
+var int nStop = 0
+var float sumR = 0.0
+
+if tradeDir != 0 and bar_index > tBar
+    risk = math.abs(tEntry - tStop)
+    costR = risk > 0 ? cost / risk : 0.0
+    curStop = tStop
+    if tp1Hit and effMgmt == "Break-even after TP1"
+        curStop := tEntry
+    if tp1Hit and effMgmt == "Stepped"
+        curStop := tp2Hit ? tTp1 : tEntry
+    if tp1Hit and effMgmt == "ATR trail after TP1"
+        if tradeDir == 1
+            trail := na(trail) ? close - trailAtr * atr : math.max(trail, close - trailAtr * atr)
+            curStop := math.max(tEntry, trail)
+        else
+            trail := na(trail) ? close + trailAtr * atr : math.min(trail, close + trailAtr * atr)
+            curStop := math.min(tEntry, trail)
+    int outcome = 0
+    float resR = na
+    if tradeDir == 1
+        if low <= curStop
+            outcome := -1
+            resR := tp1Hit ? 0.0 - costR : -1.0 - costR
+        else if high >= tTp1 and not tp1Hit
+            tp1Hit := true
+            nTp1 += 1
+        else if high >= tTp2 and not tp2Hit
+            tp2Hit := true
+            nTp2 += 1
+        else if high >= tTp3
+            outcome := 3
+            resR := effTp3 - costR
+            nTp3 += 1
+    else
+        if high >= curStop
+            outcome := -1
+            resR := tp1Hit ? 0.0 - costR : -1.0 - costR
+        else if low <= tTp1 and not tp1Hit
+            tp1Hit := true
+            nTp1 += 1
+        else if low <= tTp2 and not tp2Hit
+            tp2Hit := true
+            nTp2 += 1
+        else if low <= tTp3
+            outcome := 3
+            resR := effTp3 - costR
+            nTp3 += 1
+    if reverseOn and outcome == 0 and ((tradeDir == 1 and sigS) or (tradeDir == -1 and sigL))
+        moveR = tradeDir == 1 ? (close - tEntry) / risk : (tEntry - close) / risk
+        outcome := 4
+        resR := moveR - costR
+    if outcome != 0
+        nTrades += 1
+        if outcome == -1
+            nStop += 1
+        sumR += resR
+        tradeDir := 0
+        tp1Hit := false
+        tp2Hit := false
+        trail := na
+
+if sigL and tradeDir == 0
+    tradeDir := 1
+    tEntry := close
+    tStop := stopType == "ATR" ? close - effAtrK * atr : ta.lowest(low, swingN) - stopBuf * atr
+    if tEntry - tStop < 0.5 * atr
+        tStop := tEntry - 0.5 * atr
+    risk = tEntry - tStop
+    tTp1 := tEntry + effTp1 * risk
+    tTp2 := tEntry + effTp2 * risk
+    tTp3 := tEntry + effTp3 * risk
+    tBar := bar_index
+if sigS and tradeDir == 0
+    tradeDir := -1
+    tEntry := close
+    tStop := stopType == "ATR" ? close + effAtrK * atr : ta.highest(high, swingN) + stopBuf * atr
+    if tStop - tEntry < 0.5 * atr
+        tStop := tEntry + 0.5 * atr
+    risk = tStop - tEntry
+    tTp1 := tEntry - effTp1 * risk
+    tTp2 := tEntry - effTp2 * risk
+    tTp3 := tEntry - effTp3 * risk
+    tBar := bar_index
+
+colL = #0ECB81
+colS = #F6465D
+plotshape(sigL and tBar == bar_index and tradeDir == 1, "BUY", shape.labelup, location.belowbar, colL, text = "BUY", textcolor = color.white, size = size.tiny)
+plotshape(sigS and tBar == bar_index and tradeDir == -1, "SELL", shape.labeldown, location.abovebar, colS, text = "SELL", textcolor = color.white, size = size.tiny)
+plot(ema, "EMA", color = color.new(color.orange, 50))
+
+avgR = nTrades > 0 ? sumR / nTrades : na
+var table t = table.new(position.top_right, 2, 8, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "Ultra", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, effPreset, text_color = color.white, text_size = size.small)
+    table.cell(t, 0, 1, "State", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, tradeDir == 0 ? "flat" : tradeDir == 1 ? "LONG" : "SHORT", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "Trades", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, str.tostring(nTrades), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "TP1/2/3", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, str.tostring(nTp1) + "/" + str.tostring(nTp2) + "/" + str.tostring(nTp3) + " · stop " + str.tostring(nStop), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 4, "E net R", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, na(avgR) ? "—" : str.tostring(avgR, "#.##") + "R", text_color = na(avgR) ? color.gray : avgR > 0 ? colL : colS, text_size = size.tiny)
+    table.cell(t, 0, 5, "Targets", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, str.tostring(effTp1, "#.##") + " / " + str.tostring(effTp2, "#.##") + " / " + str.tostring(effTp3, "#.##") + " R", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 6, "Manage", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 6, effMgmt, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 7, "Cost", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 7, str.tostring(cost), text_color = color.gray, text_size = size.tiny)
+
+if sigL and tBar == bar_index and tradeDir == 1
+    alert("ULTRA BUY · " + syminfo.ticker + " E " + str.tostring(tEntry, format.mintick) + " SL " + str.tostring(tStop, format.mintick) + " TP1 " + str.tostring(tTp1, format.mintick), alert.freq_once_per_bar_close)
+if sigS and tBar == bar_index and tradeDir == -1
+    alert("ULTRA SELL · " + syminfo.ticker + " E " + str.tostring(tEntry, format.mintick) + " SL " + str.tostring(tStop, format.mintick) + " TP1 " + str.tostring(tTp1, format.mintick), alert.freq_once_per_bar_close)
+alertcondition(sigL, "BUY", "Ultra BUY")
+alertcondition(sigS, "SELL", "Ultra SELL")

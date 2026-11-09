@@ -1,0 +1,280 @@
+//@version=6
+// Liquidity EZ [pandich] — recreation aligned to published inputs/tooltips/panel.
+// Swing liquidity → sweep (distance/wick/body/range) → reclaim confirm → ATR SL / RR TP.
+indicator("Liquidity EZ [pandich]", shorttitle = "Liquidity EZ [pandich]", overlay = true, max_labels_count = 200, max_lines_count = 100, max_boxes_count = 50, max_bars_back = 500)
+
+grpT = "Trend"
+emaLen = input.int(50, "📏 EMA Length", group = grpT, tooltip = "Defines the local EMA used for the optional trend filter.")
+useEma = input.bool(true, "🧭 Use EMA Trend Filter", group = grpT)
+
+grpL = "Liquidity"
+swingLen = input.int(5, "🧱 Swing Pivot Length", minval = 1, group = grpL)
+storeN = input.int(20, "📚 Stored Liquidity Levels", minval = 2, maxval = 100, group = grpL)
+minSweepAtr = input.float(0.1, "📏 Minimum Sweep Distance / ATR", minval = 0.0, step = 0.05, group = grpL)
+reclaimRule = input.string("Close Back Inside", "🔁 Reclaim Rule", options = ["Close Back Inside", "Strong Reclaim"], group = grpL)
+minWick = input.float(0.35, "🕯️ Minimum Sweep Wick %", minval = 0.0, maxval = 1.0, step = 0.05, group = grpL)
+maxBody = input.float(0.65, "📦 Maximum Body %", minval = 0.0, maxval = 1.0, step = 0.05, group = grpL)
+minRangeAtr = input.float(0.2, "📐 Minimum Candle Range / ATR", minval = 0.0, step = 0.05, group = grpL)
+longBull = input.bool(true, "🟢 Long Confirmation Must Be Bullish", group = grpL)
+shortBear = input.bool(true, "🔴 Short Confirmation Must Be Bearish", group = grpL)
+confBars = input.int(2, "⏱️ Max Bars After Sweep For Confirmation", minval = 0, maxval = 20, group = grpL)
+needMid = input.bool(true, "➗ Require Sweep Candle Midline Break", group = grpL)
+cooldown = input.int(10, "🧊 Cooldown Bars Between Signals", minval = 0, group = grpL)
+
+grpR = "Risk"
+simOn = input.bool(true, "🧪 Enable Internal Trade Simulation", group = grpR)
+atrLen = input.int(14, "📐 ATR Length", group = grpR)
+slAtr = input.float(1.5, "🛑 Stop Loss ATR Multiplier", group = grpR)
+tpOpt = input.string("3 RR", "🎯 Take Profit RR", options = ["1.5 RR", "2 RR", "3 RR", "4 RR", "5 RR", "6 RR"], group = grpR)
+blockActive = input.bool(true, "🚧 Block New Signals While Trade Is Active", group = grpR)
+showStopped = input.bool(false, "👁️ Show Stopped Trades", group = grpR)
+
+grpD = "Display"
+showLabels = input.bool(true, "🏷️ Show Signal Labels", group = grpD)
+showEntry = input.bool(true, "⚪ Show Entry Line", group = grpD)
+showPanel = input.bool(true, "📊 Show Status Panel", group = grpD)
+colorBars = input.bool(true, "🎨 Color Signal Bars", group = grpD)
+showGuides = input.bool(true, "🧲 Show Sweep Guides", group = grpD)
+guideExt = input.int(20, "➡️ Guide Extension Bars", minval = 1, group = grpD)
+lblSizeIn = input.string("Normal", "🔠 Signal Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpD)
+panelPos = input.string("Bottom Right", "📍 Panel Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grpD)
+
+tpR = tpOpt == "1.5 RR" ? 1.5 : tpOpt == "2 RR" ? 2.0 : tpOpt == "3 RR" ? 3.0 : tpOpt == "4 RR" ? 4.0 : tpOpt == "5 RR" ? 5.0 : 6.0
+sz = lblSizeIn == "Tiny" ? size.tiny : lblSizeIn == "Small" ? size.small : lblSizeIn == "Large" ? size.large : size.normal
+posMap = panelPos == "Top Right" ? position.top_right : panelPos == "Top Left" ? position.top_left : panelPos == "Bottom Left" ? position.bottom_left : position.bottom_right
+
+atr = ta.atr(atrLen)
+ema = ta.ema(close, emaLen)
+rng = math.max(high - low, syminfo.mintick)
+body = math.abs(close - open)
+bodyPct = body / rng
+upWick = (high - math.max(open, close)) / rng
+loWick = (math.min(open, close) - low) / rng
+mid = (high + low) / 2.0
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var array<float> lvPx = array.new_float()
+var array<int> lvDir = array.new_int() // 1 = buy-side (lows), -1 = sell-side (highs)
+var array<int> lvBar = array.new_int()
+
+if not na(pl)
+    array.push(lvPx, pl)
+    array.push(lvDir, 1)
+    array.push(lvBar, bar_index - swingLen)
+if not na(ph)
+    array.push(lvPx, ph)
+    array.push(lvDir, -1)
+    array.push(lvBar, bar_index - swingLen)
+while array.size(lvPx) > storeN
+    array.shift(lvPx)
+    array.shift(lvDir)
+    array.shift(lvBar)
+
+// Pending sweep awaiting confirmation
+var int pendDir = 0
+var float pendLvl = na
+var int pendBar = na
+var float pendMid = na
+var float pendHi = na
+var float pendLo = na
+var int pendLvlBar = na
+
+f_candleOk(float wickPct, float bodyP) =>
+    rng >= minRangeAtr * atr and wickPct >= minWick and bodyP <= maxBody
+
+// Detect sweep on this bar against stored levels
+sweepNowDir = 0
+sweepNowLvl = float(na)
+sweepNowLvlBar = 0
+if array.size(lvPx) > 0 and not na(atr)
+    for i = 0 to array.size(lvPx) - 1
+        px = array.get(lvPx, i)
+        d = array.get(lvDir, i)
+        ageOk = bar_index - array.get(lvBar, i) >= swingLen
+        if not ageOk
+            continue
+        if d == 1
+            // sweep below buy-side liquidity then reclaim inside
+            dist = px - low
+            if dist >= minSweepAtr * atr and low < px and f_candleOk(loWick, bodyPct)
+                reclaim = reclaimRule == "Close Back Inside" ? close > px : (close > px and close >= mid)
+                if reclaim
+                    sweepNowDir := 1
+                    sweepNowLvl := px
+                    sweepNowLvlBar := array.get(lvBar, i)
+        else
+            dist = high - px
+            if dist >= minSweepAtr * atr and high > px and f_candleOk(upWick, bodyPct)
+                reclaim = reclaimRule == "Close Back Inside" ? close < px : (close < px and close <= mid)
+                if reclaim
+                    sweepNowDir := -1
+                    sweepNowLvl := px
+                    sweepNowLvlBar := array.get(lvBar, i)
+
+// Same-bar reclaim can confirm immediately; otherwise wait confirmation bars
+var int lastSigBar = na
+var int tradeDir = 0
+var float tEntry = na
+var float tStop = na
+var float tTp = na
+var int tBar = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var line lnG = na
+var label lbSig = na
+var label lbHit = na
+
+coolOk = na(lastSigBar) or bar_index - lastSigBar >= cooldown
+activeBlock = blockActive and tradeDir != 0
+biasOkL = not useEma or close > ema
+biasOkS = not useEma or close < ema
+
+sigL = false
+sigS = false
+
+// Register new pending sweep (or same-bar confirm)
+if sweepNowDir != 0 and coolOk and not activeBlock
+    pendDir := sweepNowDir
+    pendLvl := sweepNowLvl
+    pendBar := bar_index
+    pendMid := mid
+    pendHi := high
+    pendLo := low
+    pendLvlBar := sweepNowLvlBar
+    // same-bar reclaim already satisfied by sweep detection → confirm now if color/mid rules OK
+    confOk = true
+    if sweepNowDir == 1
+        if longBull and close <= open
+            confOk := false
+        if needMid and close < mid
+            confOk := false
+        if not biasOkL
+            confOk := false
+    else
+        if shortBear and close >= open
+            confOk := false
+        if needMid and close > mid
+            confOk := false
+        if not biasOkS
+            confOk := false
+    if confOk
+        sigL := sweepNowDir == 1
+        sigS := sweepNowDir == -1
+        pendDir := 0
+
+// Later confirmation after sweep that needed stronger follow-through
+if pendDir != 0 and bar_index > pendBar
+    if bar_index - pendBar > confBars
+        pendDir := 0
+    else if coolOk and not activeBlock
+        if pendDir == 1
+            midBreak = not needMid or close > pendMid
+            colorOk = not longBull or close > open
+            reclaim = close > pendLvl
+            if reclaim and midBreak and colorOk and biasOkL
+                sigL := true
+                pendDir := 0
+        else
+            midBreak = not needMid or close < pendMid
+            colorOk = not shortBear or close < open
+            reclaim = close < pendLvl
+            if reclaim and midBreak and colorOk and biasOkS
+                sigS := true
+                pendDir := 0
+
+// Manage simulated trade
+if simOn and tradeDir != 0 and bar_index > tBar
+    hitTp = tradeDir == 1 ? high >= tTp : low <= tTp
+    hitSl = tradeDir == 1 ? low <= tStop : high >= tStop
+    if hitSl and (not hitTp or true) // stop-first conservative when both
+        if showLabels and showStopped
+            label.new(bar_index, tradeDir == 1 ? low : high, "SL HIT", style = tradeDir == 1 ? label.style_label_up : label.style_label_down, color = #F23645, textcolor = color.white, size = sz)
+        else if not showStopped
+            line.delete(lnE)
+            line.delete(lnS)
+            line.delete(lnT)
+        tradeDir := 0
+    else if hitTp
+        if showLabels
+            label.new(bar_index, tradeDir == 1 ? high : low, "TP " + str.tostring(tpR, "#.#") + "R HIT", style = tradeDir == 1 ? label.style_label_down : label.style_label_up, color = #089981, textcolor = color.white, size = sz)
+        tradeDir := 0
+
+if (sigL or sigS) and (not blockActive or tradeDir == 0)
+    lastSigBar := bar_index
+    d = sigL ? 1 : -1
+    entry = close
+    stop = d == 1 ? entry - slAtr * atr : entry + slAtr * atr
+    risk = math.abs(entry - stop)
+    tp = d == 1 ? entry + tpR * risk : entry - tpR * risk
+    if showLabels
+        label.new(bar_index, d == 1 ? low : high, d == 1 ? "BUY" : "SELL", style = d == 1 ? label.style_label_up : label.style_label_down, color = d == 1 ? #00E676 : #FF1744, textcolor = color.white, size = sz)
+        if simOn
+            label.new(bar_index, entry, "ENTRY", style = label.style_label_left, color = #42A5F5, textcolor = color.white, size = size.tiny)
+            label.new(bar_index, stop, "INVALIDATION", style = label.style_label_left, color = #F23645, textcolor = color.white, size = size.tiny)
+            label.new(bar_index, tp, "TARGET " + str.tostring(tpR, "#.#") + "R", style = label.style_label_left, color = #089981, textcolor = color.white, size = size.tiny)
+    if showGuides
+        line.new(bar_index, entry, bar_index + guideExt, entry, color = color.new(color.gray, 40), style = line.style_dotted, width = 1)
+    if simOn
+        tradeDir := d
+        tEntry := entry
+        tStop := stop
+        tTp := tp
+        tBar := bar_index
+        if showEntry
+            line.delete(lnE)
+            line.delete(lnS)
+            line.delete(lnT)
+            lnE := line.new(bar_index, entry, bar_index + guideExt, entry, color = color.white, width = 1)
+            lnS := line.new(bar_index, stop, bar_index + guideExt, stop, color = #F23645, width = 1, style = line.style_dotted)
+            lnT := line.new(bar_index, tp, bar_index + guideExt, tp, color = #089981, width = 1, style = line.style_dashed)
+
+barcolor(colorBars and sigL ? color.new(#00E676, 40) : colorBars and sigS ? color.new(#FF1744, 40) : na)
+
+// Status panel (no performance rows — matches original tooltip)
+bias = close > ema ? "BULLISH" : close < ema ? "BEARISH" : "FLAT"
+sweepState = pendDir != 0 ? "SWEEP PENDING" : sweepNowDir != 0 ? "SWEEP" : "IDLE"
+sigState = tradeDir != 0 ? "IN TRADE" : (sigL or sigS) ? "SIGNAL" : "WAITING"
+// Quality score 0–100 from candle geometry + bias + reclaim strength
+qWick = math.min(1.0, (sigL ? loWick : sigS ? upWick : math.max(loWick, upWick)) / math.max(minWick, 0.01))
+qBody = math.max(0.0, 1.0 - bodyPct / math.max(maxBody, 0.01))
+qRange = math.min(1.0, rng / math.max(minRangeAtr * atr, syminfo.mintick))
+qBias = (sigL and biasOkL) or (sigS and biasOkS) or (not sigL and not sigS and ((bias == "BULLISH" and biasOkL) or (bias == "BEARISH" and biasOkS))) ? 1.0 : 0.5
+quality = 100.0 * (0.35 * qWick + 0.25 * qBody + 0.20 * qRange + 0.20 * qBias)
+atrPct = atr / close * 100.0
+vola = atrPct < ta.sma(atrPct, 50) ? "LOW" : atrPct > ta.sma(atrPct, 50) * 1.5 ? "HIGH" : "MID"
+h = hour(time, "UTC")
+sessName = h >= 0 and h < 7 ? "ASIA" : h >= 7 and h < 13 ? "LONDON" : h >= 13 and h < 21 ? "NY" : "LATE"
+riskState = vola == "LOW" ? "LOW VOL" : vola == "HIGH" ? "HIGH VOL" : "NORMAL"
+
+var table t = table.new(posMap, 2, 10, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if showPanel and barstate.islast
+    table.cell(t, 0, 0, "LIQUIDITY ENTRY / STATUS", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, "", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 0, 1, "Simulation", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, simOn ? "ON" : "OFF", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 2, "Risk Model", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, "SL " + str.tostring(slAtr, "#.#") + " ATR / TP " + str.tostring(tpR, "#.#") + "R", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "Bias", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, bias, text_color = bias == "BULLISH" ? #00E676 : bias == "BEARISH" ? #FF1744 : color.gray, text_size = size.tiny)
+    table.cell(t, 0, 4, "Sweep State", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, sweepState, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 5, "Signal State", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, sigState, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 6, "Quality Score", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 6, str.tostring(quality, "#.##"), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 7, "Volatility", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 7, vola, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 8, "Session", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 8, sessName, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 9, "Risk State", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 9, riskState, text_color = color.white, text_size = size.tiny)
+
+alertcondition(sigL, title = "Liquidity EZ long", message = "Liquidity EZ [pandich]: BUY")
+alertcondition(sigS, title = "Liquidity EZ short", message = "Liquidity EZ [pandich]: SELL")
+if sigL
+    alert("Liquidity EZ BUY · " + syminfo.ticker + " · " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if sigS
+    alert("Liquidity EZ SELL · " + syminfo.ticker + " · " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)

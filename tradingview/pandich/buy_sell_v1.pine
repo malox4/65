@@ -1,0 +1,87 @@
+//@version=6
+// Buy Sell V1 [pandich] — aligned to published inputs (signalLib-style ZigZag).
+// HIGH LOWER ZONE = depth, CANDLES ZONES / MOVEMENT ZONE = confirm / min move.
+indicator("Buy Sell V1", shorttitle = "Buy Sell V1", overlay = true, max_labels_count = 200, max_lines_count = 40)
+
+grp = "signalLib Config"
+depth = input.int(30, "HIGH LOWER ZONE", minval = 1, group = grp)
+candlesZ = input.int(5, "CANDLES ZONES", minval = 2, group = grp)
+moveZ = input.int(5, "MOVEMENT ZONE", minval = 1, group = grp)
+
+grpL = "Labels"
+transp = input.int(0, "Labels Transparency", minval = 0, maxval = 100, group = grpL)
+lblSzIn = input.int(3, "Label size", minval = 1, maxval = 5, group = grpL)
+colBuy = input.color(#19FE00, "Buy-Color", group = grpL)
+colSell = input.color(color.new(#FE0800, 7), "Sell-Color", group = grpL)
+repaint = input.bool(true, "Repaint Mode", group = grpL)
+extendLines = input.bool(false, "Extend Lines", group = grpL)
+
+sz = lblSzIn <= 1 ? size.tiny : lblSzIn == 2 ? size.small : lblSzIn == 3 ? size.normal : lblSzIn == 4 ? size.large : size.huge
+atr = ta.atr(14)
+
+var int leg = 0
+var float curExt = na
+var int curExtBar = na
+var float lastHi = na
+var float lastLo = na
+var int lastHiBar = na
+var int lastLoBar = na
+var line lnLast = na
+
+bool flipUp = false
+bool flipDn = false
+
+hhBars = ta.highestbars(high, depth)
+llBars = ta.lowestbars(low, depth)
+upBias = hhBars >= llBars // more recent high → up leg bias? signalLib: compare bars-ago
+// bars-ago smaller = more recent; highestbars returns bars since HH (0 = today)
+// Direction of current leg: if HH is more recent than LL → down-seeking after high? 
+// Published desc: tracks by comparing how many bars ago HH vs LL of last Depth bars.
+if na(curExt)
+    curExt := close
+    curExtBar := bar_index
+    leg := hhBars <= llBars ? 1 : -1 // HH more recent → currently after a high → down leg? Use: HH more recent means up extreme is current
+
+// Min movement: MOVEMENT ZONE as ATR tenths or price ticks proxy
+minMove = math.max(syminfo.mintick * moveZ, atr * moveZ / 10.0)
+minBars = candlesZ
+
+if leg == 1
+    if high >= curExt
+        curExt := high
+        curExtBar := bar_index
+    if low <= curExt - minMove and bar_index - curExtBar >= minBars
+        lastHi := curExt
+        lastHiBar := curExtBar
+        flipDn := true
+        curExt := low
+        curExtBar := bar_index
+        leg := -1
+else
+    if low <= curExt
+        curExt := low
+        curExtBar := bar_index
+    if high >= curExt + minMove and bar_index - curExtBar >= minBars
+        lastLo := curExt
+        lastLoBar := curExtBar
+        flipUp := true
+        curExt := high
+        curExtBar := bar_index
+        leg := 1
+
+plotshape(flipUp, title = "Buy confirm", style = shape.circle, location = location.belowbar, color = colBuy, size = size.tiny)
+plotshape(flipDn, title = "Sell confirm", style = shape.circle, location = location.abovebar, color = colSell, size = size.tiny)
+
+if flipUp and not na(lastLo)
+    label.new(lastLoBar, lastLo, "Buy-point", style = label.style_label_up, color = color.new(colBuy, transp), textcolor = color.white, size = sz)
+    if extendLines
+        line.new(lastLoBar, lastLo, bar_index, lastLo, color = color.new(colBuy, 40), style = line.style_dotted)
+if flipDn and not na(lastHi)
+    label.new(lastHiBar, lastHi, "Sell-point", style = label.style_label_down, color = color.new(colSell, transp), textcolor = color.white, size = sz)
+    if extendLines
+        line.new(lastHiBar, lastHi, bar_index, lastHi, color = color.new(colSell, 40), style = line.style_dotted)
+
+plot(repaint ? curExt : na, "Live extreme", color = color.new(color.orange, 40), style = plot.style_linebr)
+
+alertcondition(flipUp, title = "Bottom confirmed (Buy-point)", message = "Buy-point confirmed")
+alertcondition(flipDn, title = "Top confirmed (Sell-point)", message = "Sell-point confirmed")
