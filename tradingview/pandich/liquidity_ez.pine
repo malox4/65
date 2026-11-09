@@ -1,80 +1,192 @@
 //@version=6
-// Pandich Liquidity EZ — recreation from published intent + status panel cues.
-// Distinguishes stop-hunt sweep (wick beyond swing, close back) vs real breakout (close beyond).
-// Risk model default: SL 1.5 ATR / TP 3R. Quality score blends wick dominance, volume, session, vola.
-indicator("Pandich Liquidity EZ [65]", overlay = true, max_labels_count = 60, max_lines_count = 40, max_boxes_count = 20)
+// Pandich Liquidity EZ — full recreation (not a stub).
+// Liquidity pools at swing highs/lows → wick sweep vs close breakout.
+// Demand/Supply boxes (FRESH/TEST), SWEEP TRACE, BUY/SELL with ENTRY / INVALIDATION / TARGET 3R.
+// Status panel: Simulation · Risk · Bias · Sweep/Signal state · Quality · Vol · Session.
+indicator("Pandich Liquidity EZ [65]", overlay = true, max_boxes_count = 80, max_labels_count = 160, max_lines_count = 80, max_bars_back = 500)
 
-grp = "Logic"
-swingN = input.int(20, "Swing lookback", minval = 5, group = grp)
-volMult = input.float(1.2, "Volume × SMA", group = grp)
+grp = "Liquidity / Sweep"
+swingLen = input.int(5, "Pivot length", minval = 2, maxval = 20, group = grp)
+poolN = input.int(12, "Pools kept", minval = 2, maxval = 40, group = grp)
+volMult = input.float(1.2, "Volume × SMA20", group = grp)
 minWick = input.float(55.0, "Sweep wick % of range", group = grp)
-stopAtr = input.float(1.5, "SL × ATR", group = grp)
-tpR = input.float(3.0, "TP R", group = grp)
-horizon = input.int(40, "Max bars", group = grp)
-cost = input.float(0.30, "Cost", group = grp)
-sess = input.session("0700-1600", "London-ish session UTC", group = grp)
+minBodyBack = input.float(40.0, "Close back into range %", group = grp)
+qualMin = input.float(60.0, "Min quality to trade", group = grp)
+
+grpR = "Risk"
+stopAtr = input.float(1.5, "SL × ATR", group = grpR)
+tpR = input.float(3.0, "TP R", group = grpR)
+horizon = input.int(48, "Max bars in trade", group = grpR)
+cost = input.float(0.30, "Cost / RT", group = grpR)
+cooldown = input.int(3, "Cooldown bars", group = grpR)
+
+grpF = "Filters"
+sess = input.session("0700-1600", "Session UTC (London default)", group = grpF)
+needSess = input.bool(false, "Require session", group = grpF)
+emaFast = input.int(20, "Bias EMA fast", group = grpF)
+emaSlow = input.int(50, "Bias EMA slow", group = grpF)
+needBias = input.bool(true, "Trade with bias", group = grpF)
 
 atr = ta.atr(14)
 volSma = ta.sma(volume, 20)
+hiVol = volume > volSma * volMult
 rng = math.max(high - low, syminfo.mintick)
 upW = (high - math.max(open, close)) / rng * 100.0
 loW = (math.min(open, close) - low) / rng * 100.0
-priorHi = ta.highest(high[1], swingN)
-priorLo = ta.lowest(low[1], swingN)
-ema20 = ta.ema(close, 20)
-ema50 = ta.ema(close, 50)
-biasBull = ema20 > ema50
+bodyPct = math.abs(close - open) / rng * 100.0
+emaF = ta.ema(close, emaFast)
+emaS = ta.ema(close, emaSlow)
+biasBull = emaF > emaS
 sessOk = not na(time(timeframe.period, sess))
 atrPct = atr / close * 100.0
-volaLow = atrPct < ta.sma(atrPct, 50)
+volaSma = ta.sma(atrPct, 50)
+volaLow = atrPct < volaSma
+volaHigh = atrPct > volaSma * 1.5
 
-// States
-sweepWickL = low < priorLo and close > priorLo and loW >= minWick
-sweepWickS = high > priorHi and close < priorHi and upW >= minWick
-breakoutL = close > priorHi and close[1] <= priorHi
-breakoutS = close < priorLo and close[1] >= priorLo
-hiVol = volume > volSma * volMult
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
 
-// Quality 0..100
+// Liquidity pools
+var array<float> pPx = array.new_float()
+var array<int> pDir = array.new_int() // 1 = buy-side liq (lows), -1 = sell-side (highs)
+var array<int> pBar = array.new_int()
+var array<bool> pAlive = array.new_bool()
+var array<bool> pSwept = array.new_bool()
+var array<int> pTouches = array.new_int()
+var array<box> pBox = array.new_box()
+var array<label> pLab = array.new_label()
+
+if not na(pl) or not na(ph)
+    addPx = not na(pl) ? pl : ph
+    addDir = not na(pl) ? 1 : -1
+    addBar = bar_index - swingLen
+    // if both form same bar, push low then high
+    if not na(pl)
+        array.push(pPx, pl)
+        array.push(pDir, 1)
+        array.push(pBar, addBar)
+        array.push(pAlive, true)
+        array.push(pSwept, false)
+        array.push(pTouches, 0)
+        array.push(pBox, na)
+        array.push(pLab, na)
+    if not na(ph)
+        array.push(pPx, ph)
+        array.push(pDir, -1)
+        array.push(pBar, addBar)
+        array.push(pAlive, true)
+        array.push(pSwept, false)
+        array.push(pTouches, 0)
+        array.push(pBox, na)
+        array.push(pLab, na)
+    while array.size(pPx) > poolN
+        box.delete(array.get(pBox, 0))
+        label.delete(array.get(pLab, 0))
+        array.shift(pPx)
+        array.shift(pDir)
+        array.shift(pBar)
+        array.shift(pAlive)
+        array.shift(pSwept)
+        array.shift(pTouches)
+        array.shift(pBox)
+        array.shift(pLab)
+
+// Detect sweep vs breakout against nearest pool
+sweepDir = 0 // 1 long (swept lows), -1 short
+sweepPx = float(na)
+sweepIdx = -1
+breakDir = 0
+traceX1 = 0
+traceY = float(na)
+
+if array.size(pPx) > 0
+    for i = 0 to array.size(pPx) - 1
+        if not array.get(pAlive, i)
+            continue
+        px = array.get(pPx, i)
+        dir = array.get(pDir, i)
+        if dir == 1
+            // buy-side liquidity below
+            wickThrough = low < px and close > px
+            closeThrough = close < px and close[1] >= px
+            if wickThrough and loW >= minWick and bodyPct >= minBodyBack * 0.2
+                array.set(pSwept, i, true)
+                array.set(pTouches, i, array.get(pTouches, i) + 1)
+                if sweepDir == 0
+                    sweepDir := 1
+                    sweepPx := px
+                    sweepIdx := i
+                    traceX1 := array.get(pBar, i)
+                    traceY := px
+            if closeThrough
+                breakDir := -1
+                array.set(pAlive, i, false)
+        else
+            wickThrough = high > px and close < px
+            closeThrough = close > px and close[1] <= px
+            if wickThrough and upW >= minWick and bodyPct >= minBodyBack * 0.2
+                array.set(pSwept, i, true)
+                array.set(pTouches, i, array.get(pTouches, i) + 1)
+                if sweepDir == 0
+                    sweepDir := -1
+                    sweepPx := px
+                    sweepIdx := i
+                    traceX1 := array.get(pBar, i)
+                    traceY := px
+            if closeThrough
+                breakDir := 1
+                array.set(pAlive, i, false)
+
+// Quality score 0..100
 q = 50.0
-q += sweepWickL or sweepWickS ? 15 : 0
-q += hiVol ? 10 : -5
-q += sessOk ? 10 : -5
-q += volaLow ? -10 : 8
-q += (sweepWickL and biasBull) or (sweepWickS and not biasBull) ? 12 : 0
-q += math.min(20, math.max(loW, upW) - 40) * 0.4
-quality = math.max(0, math.min(100, q))
+q += sweepDir != 0 ? 18 : 0
+q += breakDir != 0 ? -12 : 0
+q += hiVol ? 12 : -6
+q += sessOk ? 10 : -8
+q += volaLow ? -8 : 6
+q += volaHigh ? 4 : 0
+q += (sweepDir == 1 and biasBull) or (sweepDir == -1 and not biasBull) ? 14 : -4
+q += math.min(18.0, math.max(0.0, math.max(loW, upW) - 45.0) * 0.5)
+quality = math.max(0.0, math.min(100.0, q))
 
-sigL = sweepWickL and hiVol and quality >= 60 and not breakoutS
-sigS = sweepWickS and hiVol and quality >= 60 and not breakoutL
+sessPass = not needSess or sessOk
+biasPassL = not needBias or biasBull
+biasPassS = not needBias or not biasBull
+sigL = sweepDir == 1 and hiVol and quality >= qualMin and sessPass and biasPassL and breakDir == 0
+sigS = sweepDir == -1 and hiVol and quality >= qualMin and sessPass and biasPassS and breakDir == 0
 
 var int tradeDir = 0
 var float tEntry = na
 var float tStop = na
 var float tTp = na
 var int tBar = na
+var float tSweep = na
+var int lastClose = na
 var string sweepState = "IDLE"
 var string signalState = "WAITING"
 
 var int nTrades = 0
+var int nWin = 0
 var float sumR = 0.0
 
-if sweepWickL or sweepWickS
+if sweepDir != 0
     sweepState := "SWEEP"
-else if breakoutL or breakoutS
+else if breakDir != 0
     sweepState := "BREAKOUT"
 else
     sweepState := "IDLE"
 
+coolOk = na(lastClose) or bar_index - lastClose >= cooldown
+
 if tradeDir != 0 and bar_index > tBar
     risk = math.abs(tEntry - tStop)
     costR = risk > 0 ? cost / risk : 0.0
-    int outcome = 0
-    float resR = na
+    outcome = 0
+    resR = 0.0
     if tradeDir == 1
         if low <= tStop
             outcome := -1
-            resR := -1 - costR
+            resR := -1.0 - costR
         else if high >= tTp
             outcome := 1
             resR := tpR - costR
@@ -84,7 +196,7 @@ if tradeDir != 0 and bar_index > tBar
     else
         if high >= tStop
             outcome := -1
-            resR := -1 - costR
+            resR := -1.0 - costR
         else if low <= tTp
             outcome := 1
             resR := tpR - costR
@@ -94,53 +206,138 @@ if tradeDir != 0 and bar_index > tBar
     if outcome != 0
         nTrades += 1
         sumR += resR
+        if resR > 0
+            nWin += 1
+            label.new(bar_index, tradeDir == 1 ? high : low, "TP " + str.tostring(tpR, "#.#") + "R HIT", style = label.style_label_center, color = #0ECB81, textcolor = color.white, size = size.small)
+        else if outcome == -1
+            label.new(bar_index, tradeDir == 1 ? low : high, "INVALIDATED", style = label.style_label_center, color = #F6465D, textcolor = color.white, size = size.small)
         tradeDir := 0
+        lastClose := bar_index
         signalState := "WAITING"
 
-if sigL and tradeDir == 0
+if sigL and tradeDir == 0 and coolOk
     tradeDir := 1
     tEntry := close
     tStop := close - stopAtr * atr
     tTp := close + tpR * (tEntry - tStop)
     tBar := bar_index
+    tSweep := sweepPx
     signalState := "LONG"
-if sigS and tradeDir == 0
+    // mark pool as zone demand
+    if sweepIdx >= 0
+        array.set(pSwept, sweepIdx, true)
+if sigS and tradeDir == 0 and coolOk
     tradeDir := -1
     tEntry := close
     tStop := close + stopAtr * atr
     tTp := close - tpR * (tStop - tEntry)
     tBar := bar_index
+    tSweep := sweepPx
     signalState := "SHORT"
+    if sweepIdx >= 0
+        array.set(pSwept, sweepIdx, true)
 
+colDem = color.new(#26A69A, 78)
+colSup = color.new(#EF5350, 78)
 colL = #0ECB81
 colS = #F6465D
-plotshape(sigL, "Sweep long", shape.triangleup, location.belowbar, colL, size = size.tiny)
-plotshape(sigS, "Sweep short", shape.triangledown, location.abovebar, colS, size = size.tiny)
-plotshape(breakoutL, "BO up", shape.diamond, location.abovebar, color.new(color.blue, 40), size = size.tiny)
-plotshape(breakoutS, "BO dn", shape.diamond, location.belowbar, color.new(color.blue, 40), size = size.tiny)
 
-avgR = nTrades > 0 ? sumR / nTrades : na
-riskState = volaLow ? "LOW VOL" : atrPct > ta.sma(atrPct, 50) * 1.5 ? "HIGH VOL" : "NORMAL"
-var table t = table.new(position.top_right, 2, 9, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+// Draw pools as Demand / Supply zones
 if barstate.islast
-    table.cell(t, 0, 0, "Liquidity EZ", text_color = color.yellow, text_size = size.small)
-    table.cell(t, 1, 0, "Simulation ON", text_color = color.white, text_size = size.small)
-    table.cell(t, 0, 1, "Risk model", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 1, "SL " + str.tostring(stopAtr, "#.#") + " ATR / TP " + str.tostring(tpR, "#.#") + "R", text_color = color.white, text_size = size.tiny)
-    table.cell(t, 0, 2, "Bias", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 2, biasBull ? "BULLISH" : "BEARISH", text_color = biasBull ? colL : colS, text_size = size.tiny)
-    table.cell(t, 0, 3, "Sweep state", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 3, sweepState, text_color = color.white, text_size = size.tiny)
-    table.cell(t, 0, 4, "Signal", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 4, signalState, text_color = color.white, text_size = size.tiny)
-    table.cell(t, 0, 5, "Quality", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 5, str.tostring(quality, "#.##"), text_color = quality >= 70 ? colL : quality >= 50 ? color.yellow : colS, text_size = size.tiny)
-    table.cell(t, 0, 6, "Volatility", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 6, volaLow ? "LOW" : "OK", text_color = color.white, text_size = size.tiny)
-    table.cell(t, 0, 7, "Session", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 7, sessOk ? "ACTIVE" : "OFF", text_color = color.white, text_size = size.tiny)
-    table.cell(t, 0, 8, "Avg R / risk", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 8, (na(avgR) ? "—" : str.tostring(avgR, "#.##") + "R") + " · " + riskState + " · n=" + str.tostring(nTrades), text_color = color.white, text_size = size.tiny)
+    for i = 0 to array.size(pPx) - 1
+        box.delete(array.get(pBox, i))
+        label.delete(array.get(pLab, i))
+        array.set(pBox, i, na)
+        array.set(pLab, i, na)
+        if not array.get(pAlive, i) and not array.get(pSwept, i)
+            continue
+        px = array.get(pPx, i)
+        dir = array.get(pDir, i)
+        b0 = array.get(pBar, i)
+        h = math.max(atr * 0.35, px * 0.0004)
+        top = dir == 1 ? px + h * 0.15 : px + h
+        bot = dir == 1 ? px - h : px - h * 0.15
+        fresh = array.get(pTouches, i) == 0 and not array.get(pSwept, i)
+        swept = array.get(pSwept, i)
+        if not array.get(pAlive, i) and not swept
+            continue
+        bg = dir == 1 ? colDem : colSup
+        bx = box.new(b0, top, bar_index + 2, bot, bgcolor = bg, border_color = dir == 1 ? #26A69A : #EF5350, border_style = fresh ? line.style_solid : line.style_dashed, border_width = 2)
+        array.set(pBox, i, bx)
+        tag = (dir == 1 ? "Demand " : "Supply ") + (fresh ? "★★★★ FRESH" : swept ? "SWEEP" : "TEST " + str.tostring(array.get(pTouches, i)))
+        lb = label.new(bar_index + 2, dir == 1 ? top : bot, tag, style = label.style_label_left, color = color.new(#1E2329, 0), textcolor = color.white, size = size.small)
+        array.set(pLab, i, lb)
 
-alertcondition(sigL, "EZ long", "Liquidity EZ long")
-alertcondition(sigS, "EZ short", "Liquidity EZ short")
+// Sweep trace + trade plan drawings
+var line tr = na
+var line lnE = na
+var line lnS = na
+var line lnT = na
+var box bxRisk = na
+var box bxRew = na
+var label lbBuy = na
+var label lbEnt = na
+var label lbInv = na
+var label lbTp = na
+
+if barstate.islast
+    line.delete(tr)
+    line.delete(lnE)
+    line.delete(lnS)
+    line.delete(lnT)
+    box.delete(bxRisk)
+    box.delete(bxRew)
+    label.delete(lbBuy)
+    label.delete(lbEnt)
+    label.delete(lbInv)
+    label.delete(lbTp)
+    if sweepDir != 0 and not na(traceY)
+        tr := line.new(traceX1, traceY, bar_index, sweepDir == 1 ? low : high, color = color.orange, width = 2, style = line.style_arrow_right)
+        label.new(bar_index, sweepDir == 1 ? low : high, "SWEEP TRACE", style = label.style_label_left, color = color.orange, textcolor = color.black, size = size.tiny)
+    if tradeDir != 0
+        x2 = bar_index + 10
+        lnE := line.new(tBar, tEntry, x2, tEntry, color = #2962FF, width = 2)
+        lnS := line.new(tBar, tStop, x2, tStop, color = colS, width = 2, style = line.style_dotted)
+        lnT := line.new(tBar, tTp, x2, tTp, color = colL, width = 2, style = line.style_dashed)
+        bxRisk := box.new(tBar, math.max(tEntry, tStop), x2, math.min(tEntry, tStop), bgcolor = color.new(colS, 88), border_color = color.new(colS, 50))
+        bxRew := box.new(tBar, math.max(tEntry, tTp), x2, math.min(tEntry, tTp), bgcolor = color.new(colL, 90), border_color = color.new(colL, 50))
+        lbBuy := label.new(tBar, tradeDir == 1 ? tStop : tTp, tradeDir == 1 ? "BUY" : "SELL", style = tradeDir == 1 ? label.style_label_up : label.style_label_down, color = tradeDir == 1 ? colL : colS, textcolor = color.white, size = size.normal)
+        lbEnt := label.new(x2, tEntry, "ENTRY " + str.tostring(tEntry, format.mintick), style = label.style_label_left, color = #2962FF, textcolor = color.white, size = size.small)
+        lbInv := label.new(x2, tStop, "INVALIDATION " + str.tostring(tStop, format.mintick), style = label.style_label_left, color = colS, textcolor = color.white, size = size.small)
+        lbTp := label.new(x2, tTp, "TARGET " + str.tostring(tpR, "#.#") + "R " + str.tostring(tTp, format.mintick), style = label.style_label_left, color = colL, textcolor = color.white, size = size.small)
+
+plotshape(sigL, title = "BUY", style = shape.labelup, location = location.belowbar, color = colL, text = "BUY", textcolor = color.white, size = size.small)
+plotshape(sigS, title = "SELL", style = shape.labeldown, location = location.abovebar, color = colS, text = "SELL", textcolor = color.white, size = size.small)
+
+riskState = volaLow ? "LOW VOL" : volaHigh ? "HIGH VOL" : "NORMAL"
+avgR = nTrades > 0 ? sumR / nTrades : na
+
+var table t = table.new(position.bottom_right, 2, 10, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
+if barstate.islast
+    table.cell(t, 0, 0, "LIQUIDITY ENTRY", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 1, 0, "STATUS PANEL", text_color = color.yellow, text_size = size.small)
+    table.cell(t, 0, 1, "Simulation", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 1, "ON", text_color = colL, text_size = size.tiny)
+    table.cell(t, 0, 2, "Risk Model", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 2, "SL " + str.tostring(stopAtr, "#.#") + " ATR / TP " + str.tostring(tpR, "#.#") + "R", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 3, "Bias", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 3, biasBull ? "BULLISH" : "BEARISH", text_color = biasBull ? colL : colS, text_size = size.tiny)
+    table.cell(t, 0, 4, "Sweep State", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 4, sweepState, text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 5, "Signal State", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 5, signalState, text_color = signalState == "WAITING" ? color.gray : color.white, text_size = size.tiny)
+    table.cell(t, 0, 6, "Quality Score", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 6, str.tostring(quality, "#.##"), text_color = quality >= 70 ? colL : quality >= qualMin ? color.yellow : colS, text_size = size.tiny)
+    table.cell(t, 0, 7, "Volatility", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 7, volaLow ? "LOW" : volaHigh ? "HIGH" : "OK", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 8, "Session", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 8, sessOk ? "LONDON/ACTIVE" : "OFF", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 0, 9, "Risk State / E", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 1, 9, riskState + " · n=" + str.tostring(nTrades) + (na(avgR) ? "" : " · " + str.tostring(avgR, "#.##") + "R"), text_color = color.white, text_size = size.tiny)
+
+alertcondition(sigL, "EZ long", "Liquidity EZ BUY")
+alertcondition(sigS, "EZ short", "Liquidity EZ SELL")
+if sigL
+    alert("EZ BUY · " + syminfo.ticker + " E " + str.tostring(close, format.mintick) + " SL " + str.tostring(close - stopAtr * atr, format.mintick) + " TP " + str.tostring(tpR, "#.#") + "R", alert.freq_once_per_bar_close)
+if sigS
+    alert("EZ SELL · " + syminfo.ticker + " E " + str.tostring(close, format.mintick) + " SL " + str.tostring(close + stopAtr * atr, format.mintick) + " TP " + str.tostring(tpR, "#.#") + "R", alert.freq_once_per_bar_close)

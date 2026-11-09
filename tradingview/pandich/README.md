@@ -1,38 +1,30 @@
-# Pandich scripts — логические копии для `65`
+# Pandich scripts — полные логические копии для `65`
 
-Папка: воссоздание **логики** публичных индикаторов профиля [panda77778](https://ru.tradingview.com/u/panda77778/#published-scripts) по описаниям на TradingView.
-
-Это **не** побайтовый экспорт исходников с TV (API без логина отдаёт `401`). Это рабочие Pine v6 скрипты с теми же правилами входа/стопа/TP/панели, чтобы ставить в TradingView из репо.
+Воссоздание **полной** логики публичных индикаторов [panda77778](https://ru.tradingview.com/u/panda77778/#published-scripts) по описаниям и превью на TV. Не экспорт байт-в-байт (без сессии автора API даёт 401), но **без урезанных «одной зоны / без профиля»**.
 
 Имена на графике: `Pandich … [65]`.
 
-| Файл | Оригинал на TV | Что внутри |
+| Файл | Оригинал | Полный состав |
 |---|---|---|
-| `sweep.pine` | Sweep [pandich] | Свип N-бар, стоп за wick + ATR min/max, TP 1/2/3R, E net |
-| `liquidity_ez.pine` | Liquidity EZ | Sweep vs breakout, quality score, SL 1.5 ATR / TP 3R |
-| `zone_rank.pine` | Zone Rank | База+импульс → зона, звёзды, confirm/limit, статистика |
-| `panda_scanner.pine` | Panda Scanner | 6 сетапов + скорборд →TP1 |
-| `ultra_signals.pine` | Ultra Signals | RSI + HA Trend, пресеты, BE/trail, E net |
-| `matematik_26.pine` | Matematik 2.6 | Волна / 2.6, зона, TP1/TP2 |
-| `supertrend_tp.pine` | Supertrend TP1–3 | Supertrend flip + лестница R |
-| `zigzag_signals.pine` | ZigZag Signals | Подтверждённый ZZ без репейнта |
-| `buy_sell_v1.pine` | Pandich Buy Sell V1 | Точки свинга + маркер подтверждения |
-| `sessions_sd_daily.pine` | Sessions + S/D Daily | Карта сессий + дневные зоны (упрощённый профиль) |
+| `sweep.pine` | Sweep | Свип, skip по max ATR, TP1–3, E net, метки SWEEP |
+| `liquidity_ez.pine` | Liquidity EZ | Пулы ликвидности, Demand/Supply FRESH/TEST, SWEEP TRACE, ENTRY/INVALIDATION/TARGET 3R, status panel + quality |
+| `zone_rank.pine` | Zone Rank | Массив зон, ★1–5, FRESH/TEST, merge, confirm/limit, 50/50+BE, панель WR/PF/t/серия/сессия |
+| `panda_scanner.pine` | Panda Scanner | 6 сетапов + скорборд |
+| `ultra_signals.pine` | Ultra Signals | RSI + HA, пресеты, BE/trail |
+| `matematik_26.pine` | Matematik 2.6 | Волна / 2.6 |
+| `supertrend_tp.pine` | Supertrend TP | Flip + TP1–3 |
+| `zigzag_signals.pine` | ZigZag Signals | Confirmed ZZ |
+| `buy_sell_v1.pine` | Buy Sell V1 | Свинг + confirm marker |
+| `sessions_sd_daily.pine` | Sessions + S/D | 4 сессии (range/mean/VWAP/max-min) + **дневной volume profile по bins** → supply/demand |
 
 ## Как поставить
 
 1. Pine Editor → вставить файл → Save → Add to chart.  
-2. Референс у оригиналов часто **XAUUSD M1–M15**; на крипте крути `cost` и ATR.  
-3. Цифры в панели — форвард по загруженной истории, не брокерский бэктест.
+2. Референс: **XAUUSD M15** (Zone Rank Auto) / **M5** (Sweep).  
+3. Сравни с оригиналом на том же символе: Add original + наш скрипт.
 
-## Честно про «1-1»
+## Ограничения
 
-- Правила и структура совпадают с **опубликованным описанием**.  
-- Мелочи реализации (порядок фильтров, точный HA-счётчик, полный volume-profile по bins) могут отличаться от закрытого/недоступного исходника.  
-- `sessions_sd_daily`: дневные зоны — **упрощение** (доля range), не полный LuxAlgo intrabar profile.  
-- Если нужно побайтовое совпадение — экспортируй исходник из своего Pine Editor под `panda77778` и замени файл здесь.
-
-## Связь с остальным репо
-
-- Уроки «10 поток» и `lesson_signal_mix.pine` — учебный слой.  
-- Sweep / Scanner здесь ближе к боевым сетапам профиля Pandich.
+- Protected исходник Zone Rank / Ultra недоступен снаружи — логика с описания + превью.  
+- Без intrabar `request.security_lower_tf` профиль дня строится по барам текущего ТФ (на M1–M5 ближе к оригиналу LuxAlgo).  
+- Побайтовый клон: вставь свой экспорт из Pine Editor поверх файла.

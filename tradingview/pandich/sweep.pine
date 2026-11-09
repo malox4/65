@@ -164,8 +164,8 @@ stopPct = nTrades > 0 ? nStop * 100.0 / nTrades : na
 enough = nTrades >= 30
 txtCol = enough ? color.white : color.gray
 
-plotshape(fireL, title = "Sweep long", style = shape.triangleup, location = location.belowbar, color = colL, size = size.small)
-plotshape(fireS, title = "Sweep short", style = shape.triangledown, location = location.abovebar, color = colS, size = size.small)
+plotshape(fireL, title = "Sweep long", style = shape.labelup, location = location.belowbar, color = colL, text = "SWEEP", textcolor = color.white, size = size.small)
+plotshape(fireS, title = "Sweep short", style = shape.labeldown, location = location.abovebar, color = colS, text = "SWEEP", textcolor = color.white, size = size.small)
 
 var line lnE = na
 var line lnS = na
@@ -175,15 +175,6 @@ var line ln3 = na
 var box bxR = na
 var box bxW = na
 var label lb = na
-var array<line> oldL = array.new_line()
-var array<box> oldB = array.new_box()
-
-f_trim() =>
-    while array.size(oldL) > keepN * 5
-        line.delete(array.shift(oldL))
-    while array.size(oldB) > keepN * 2
-        box.delete(array.shift(oldB))
-
 if barstate.islast
     line.delete(lnE)
     line.delete(lnS)
