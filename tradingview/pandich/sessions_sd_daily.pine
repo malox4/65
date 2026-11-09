@@ -2,37 +2,37 @@
 // Pandich Sessions + Supply & Demand Daily — full recreation (LuxAlgo-style combine).
 // Up to 4 sessions with range / mean / VWAP / completed max-min.
 // Daily S/D: previous day range split into bins, volume accumulated top→supply / bottom→demand until Threshold %.
-indicator("Pandich Sessions + S/D Daily [65]", overlay = true, max_boxes_count = 150, max_lines_count = 100, max_labels_count = 60, max_bars_back = 2000)
+indicator("Sessions + Supply and Demand Daily (LuxAlgo, combined)", shorttitle = "Sessions + S&D Daily", overlay = true, max_boxes_count = 150, max_lines_count = 100, max_labels_count = 60, max_bars_back = 2000)
 
 grpA = "Session A · NY"
-aOn = input.bool(true, "Enable A", group = grpA)
+aOn = input.bool(true, "Enable", group = grpA)
 aName = input.string("New York", "Name", group = grpA)
-aSess = input.session("1300-2200", "Hours (exchange/UTC per chart)", group = grpA)
-aCol = input.color(color.new(#2962FF, 82), "Color", group = grpA)
+aSess = input.session("1300-2200", "Hours", group = grpA)
+aCol = input.color(color.new(#ff5d00, 90), "New York", group = grpA)
 
 grpB = "Session B · London"
-bOn = input.bool(true, "Enable B", group = grpB)
+bOn = input.bool(true, "Enable", group = grpB)
 bName = input.string("London", "Name", group = grpB)
 bSess = input.session("0700-1600", "Hours", group = grpB)
-bCol = input.color(color.new(#FF6D00, 82), "Color", group = grpB)
+bCol = input.color(color.new(#2157f3, 90), "London", group = grpB)
 
 grpC = "Session C · Tokyo"
-cOn = input.bool(true, "Enable C", group = grpC)
+cOn = input.bool(true, "Enable", group = grpC)
 cName = input.string("Tokyo", "Name", group = grpC)
 cSess = input.session("0000-0900", "Hours", group = grpC)
-cCol = input.color(color.new(#00C853, 82), "Color", group = grpC)
+cCol = input.color(color.new(#e91e63, 90), "Tokyo", group = grpC)
 
 grpD = "Session D · Sydney"
-dOn = input.bool(false, "Enable D", group = grpD)
+dOn = input.bool(true, "Enable", group = grpD)
 dName = input.string("Sydney", "Name", group = grpD)
 dSess = input.session("2100-0600", "Hours", group = grpD)
-dCol = input.color(color.new(#AA00FF, 82), "Color", group = grpD)
+dCol = input.color(color.new(#AA00FF, 90), "Sydney", group = grpD)
 
 grpS = "Session visuals"
-showRange = input.bool(true, "Range box", group = grpS)
-showMean = input.bool(true, "Mean close", group = grpS)
-showVwap = input.bool(true, "Session VWAP", group = grpS)
-showMaxMin = input.bool(true, "Extend completed Max/Min", group = grpS)
+showRange = input.bool(true, "Range", group = grpS)
+showMean = input.bool(false, "Mean", group = grpS)
+showVwap = input.bool(false, "VWAP", group = grpS)
+showMaxMin = input.bool(false, "Max/Min", group = grpS)
 showDash = input.bool(true, "Dashboard", group = grpS)
 
 grpZ = "Supply & Demand Daily"

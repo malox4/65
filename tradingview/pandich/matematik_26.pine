@@ -2,14 +2,14 @@
 // Pandich Matematik 2.6 — recreation from published logic (idea: wave / 2.6 projection).
 // Last confirmed pivot high/low → offset = range/2.6 → BUY below low / SELL above high.
 // Entry at target, stop = 35% of offset beyond, TP1 = opposite pivot, TP2 = mid range.
-indicator("Pandich Matematik 2.6 [65]", overlay = true, max_labels_count = 100, max_lines_count = 80, max_boxes_count = 40)
+indicator("Matematik 2.6 [pandich]", shorttitle = "M26 [pandich]", overlay = true, max_labels_count = 100, max_lines_count = 80, max_boxes_count = 40)
 
 grp = "Wave"
-divN    = input.float(2.6, "Divisor", minval = 1.1, step = 0.1, group = grp)
-pivL    = input.int(5, "Pivot left", minval = 1, group = grp)
-pivR    = input.int(3, "Pivot right", minval = 1, group = grp)
-minRange = input.float(1.0, "Min wave range (price)", minval = 0.0, step = 0.1, group = grp)
-entryMode = input.string("Candle close", "Entry mode", options = ["Zone touch", "Candle close"], group = grp)
+divN    = input.float(2.6, "Делитель диапазона", minval = 1.1, step = 0.1, group = grp)
+pivL    = input.int(5, "Pivot: баров слева", minval = 1, group = grp)
+pivR    = input.int(3, "Pivot: баров справа", minval = 1, group = grp)
+minRange = input.float(1.0, "Мин. диапазон волны, в цене", minval = 0.0, step = 0.1, group = grp)
+entryMode = input.string("Zone touch", "Режим входа", options = ["Zone touch", "Candle close"], group = grp)
 zonePct = input.float(15.0, "Zone thickness % of offset", minval = 1, maxval = 100, group = grp)
 
 grpR = "Risk"

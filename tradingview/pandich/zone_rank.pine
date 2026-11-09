@@ -2,72 +2,89 @@
 // Pandich Zone Rank — full recreation (no single-zone shortcut).
 // Base 1–3 narrow candles + impulse → many S/D zones, stars 1–5, FRESH/TEST, first-touch signal,
 // confirm/limit, 50/50 + BE, full panel (WR, PF, avg R, streak, trend, session, costs).
-indicator("Pandich Zone Rank [65]", overlay = true, max_boxes_count = 120, max_labels_count = 200, max_lines_count = 80, max_bars_back = 1000)
+indicator("Zone Rank [pandich]", shorttitle = "ZoneRank-p", overlay = true, max_boxes_count = 120, max_labels_count = 200, max_lines_count = 80, max_bars_back = 1000)
 
 grpZ = "Zones"
-baseAtrMax = input.float(1.0, "Base candle ≤ ATR ×", group = grpZ)
-impAtrMin = input.float(1.5, "Impulse ≥ ATR ×", group = grpZ)
-bodyMinPct = input.float(50.0, "Impulse body ≥ % range", group = grpZ)
-minZoneAtr = input.float(0.5, "Min zone height × ATR", group = grpZ)
-minStop$ = input.float(1.5, "Min stop $ (widen zone)", group = grpZ)
-maxTouches = input.int(3, "Retire after touches", minval = 1, maxval = 10, group = grpZ)
-maxZones = input.int(12, "Max zones on chart", minval = 2, maxval = 30, group = grpZ)
-maxDistAtr = input.float(15.0, "Hide zones farther than ATR ×", group = grpZ)
-drawFromBase = input.bool(true, "Draw box from base candle", group = grpZ)
-mergeNear = input.bool(true, "Merge overlapping same-side zones", group = grpZ)
+impAtrMin = input.float(1.5, "Импульс ≥ × ATR", group = grpZ)
+bodyMinFrac = input.float(0.5, "Тело импульса ≥ доли размаха", minval = 0.1, maxval = 1.0, step = 0.05, group = grpZ)
+baseAtrMax = input.float(1.0, "Бар базы ≤ × ATR", group = grpZ)
+baseMaxBars = input.int(3, "Баров в базе, максимум", minval = 1, maxval = 5, group = grpZ)
+minZoneAtr = input.float(0.3, "Мин. высота зоны, × ATR", group = grpZ)
+maxZoneAtr = input.float(2.0, "Макс. высота зоны, × ATR", group = grpZ)
+maxTouches = input.int(3, "Касаний до списания зоны", minval = 1, maxval = 10, group = grpZ)
+maxZonesSide = input.int(10, "Активных зон каждого типа", minval = 2, maxval = 30, group = grpZ)
+mergeNear = input.bool(false, "Сливать соседние зоны", group = grpZ)
+mergeGapAtr = input.float(0.25, "Слияние: зазор до, × ATR", group = grpZ)
+atrLen = input.int(14, "Период ATR", group = grpZ)
+maxDistAtr = input.float(15.0, "Рисовать зоны не дальше, × ATR от цены", group = grpZ)
+drawFromBase = input.bool(true, "Рисовать зону от базы", group = grpZ)
+keepDead = input.bool(false, "Оставлять отыгравшие зоны (серые)", group = grpZ)
 
 grpS = "Signals"
-sigMode = input.string("Auto", "Signal mode", options = ["Auto", "On", "Off"], group = grpS)
-preset = input.string("High win rate", "Preset", options = ["High win rate", "Manual"], group = grpS)
-entryType = input.string("Confirmation", "Entry", options = ["Confirmation", "Limit"], group = grpS)
-confWin = input.int(3, "Confirm window (bars)", minval = 1, maxval = 10, group = grpS)
-minStars = input.int(3, "Min stars", minval = 1, maxval = 5, group = grpS)
-useTrend = input.bool(true, "Trend filter", group = grpS)
-trendMode = input.string("Chart EMA60", "Trend source", options = ["Chart EMA60", "H1 EMA50/200"], group = grpS)
-tpMode = input.string("$", "Target mode", options = ["$", "R"], group = grpS)
-tp1$ = input.float(5.0, "TP1 $", group = grpS)
-tp2$ = input.float(10.0, "TP2 $", group = grpS)
-tp1R = input.float(1.0, "TP1 R", group = grpS)
-tp2R = input.float(2.0, "TP2 R", group = grpS)
-exit5050 = input.bool(true, "50/50 + BE after TP1", group = grpS)
-stopBuf = input.float(0.1, "Stop buffer × ATR", group = grpS)
-cost = input.float(0.20, "Cost / round trip $", group = grpS)
-sess = input.session("0700-2000", "Active session (UTC)", group = grpS)
-lang = input.string("RU", "Panel language", options = ["RU", "EN"], group = grpS)
+preset = input.string("Свои настройки", "Пресет", options = ["Свои настройки", "Высокий винрейт"], group = grpS)
+sigMode = input.string("Авто", "Сигналы", options = ["Авто", "Вкл", "Выкл"], group = grpS)
+confWin = input.int(3, "Окно подтверждения, баров", minval = 1, maxval = 10, group = grpS)
+minStars = input.int(3, "Мин. звёзд для сигнала", minval = 1, maxval = 5, group = grpS)
+useTrend = input.bool(false, "Только по тренду", group = grpS)
+tpMode = input.string("$", "Цели", options = ["$", "R"], group = grpS)
+tp1$ = input.float(5.0, "TP1, $", group = grpS)
+tp2$ = input.float(10.0, "TP2, $", group = grpS)
+tp1R = input.float(1.0, "TP1, R", group = grpS)
+tp2R = input.float(2.0, "TP2, R", group = grpS)
+exitMode = input.string("50/50 + безубыток", "Выход", options = ["50/50 + безубыток", "Всё на TP1", "Всё на TP2"], group = grpS)
+stopBuf = input.float(0.1, "Буфер стопа, × ATR", group = grpS)
+minStop$ = input.float(1.5, "Мин. стоп, $", group = grpS)
+cost = input.float(0.3, "Издержки на сделку, $", group = grpS)
+nyBlockMin = input.int(15, "Не входить за N минут до 17:00 Нью-Йорка", minval = 0, group = grpS)
+sessFrom = input.int(7, "Активная сессия с, час UTC", minval = 0, maxval = 23, group = grpS)
+sessTo = input.int(20, "до, час UTC", minval = 0, maxval = 23, group = grpS)
+trendMode = input.string("ТФ графика (EMA)", "Тренд", options = ["ТФ графика (EMA)", "H1 (EMA 50/200)"], group = grpS)
+emaTrendLen = input.int(60, "Период EMA тренда", group = grpS)
+flatBand = input.float(0.25, "Полоса FLAT, × ATR", group = grpS)
+lang = input.string("RU", "Язык панели, подписей и алертов", options = ["RU", "EN", "UZ"], group = grpS)
 
-// Preset High win rate (from published notes): confirm, 3★, $4/$8 or $5/$10, trend on
-effMinStars = preset == "High win rate" ? 3 : minStars
-effTp1$ = preset == "High win rate" ? 4.0 : tp1$
-effTp2$ = preset == "High win rate" ? 8.0 : tp2$
-effEntry = preset == "High win rate" ? "Confirmation" : entryType
-effTrend = preset == "High win rate" ? true : useTrend
-effTpMode = preset == "High win rate" ? "$" : tpMode
+// Preset «Высокий винрейт»: confirm, 3★, $4/$8, 50/50, trend on (published notes)
+hiWR = preset == "Высокий винрейт"
+effMinStars = hiWR ? 3 : minStars
+effTp1$ = hiWR ? 4.0 : tp1$
+effTp2$ = hiWR ? 8.0 : tp2$
+effEntry = "Confirmation"
+effTrend = hiWR ? true : useTrend
+effTpMode = hiWR ? "$" : tpMode
+exit5050 = hiWR ? true : exitMode == "50/50 + безубыток"
+exitTp1Only = not hiWR and exitMode == "Всё на TP1"
+exitTp2Only = not hiWR and exitMode == "Всё на TP2"
 
-atr = ta.atr(14)
-ema60 = ta.ema(close, 60)
+atr = ta.atr(atrLen)
+ema60 = ta.ema(close, emaTrendLen)
 htfBull = request.security(syminfo.tickerid, "60", ta.ema(close, 50) > ta.ema(close, 200) ? 1 : -1, lookahead = barmerge.lookahead_off)
-bullT = trendMode == "H1 EMA50/200" ? htfBull == 1 : close > ema60 + 0.25 * atr
-bearT = trendMode == "H1 EMA50/200" ? htfBull == -1 : close < ema60 - 0.25 * atr
+bullT = trendMode == "H1 (EMA 50/200)" ? htfBull == 1 : close > ema60 + flatBand * atr
+bearT = trendMode == "H1 (EMA 50/200)" ? htfBull == -1 : close < ema60 - flatBand * atr
 flatT = not bullT and not bearT
-sessOk = not na(time(timeframe.period, sess))
-tfOk = sigMode == "On" or (sigMode == "Auto" and timeframe.period == "15")
-signalsOn = sigMode != "Off" and tfOk
+hUtc = hour(time, "UTC")
+sessOk = sessFrom <= sessTo ? (hUtc >= sessFrom and hUtc < sessTo) : (hUtc >= sessFrom or hUtc < sessTo)
+// block N minutes before 17:00 America/New_York
+nyMin = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+nyBlocked = nyBlockMin > 0 and nyMin >= (17 * 60 - nyBlockMin) and nyMin < 17 * 60
+tfOk = sigMode == "Вкл" or (sigMode == "Авто" and timeframe.period == "15")
+signalsOn = sigMode != "Выкл" and tfOk
 
 rng = math.max(high - low, syminfo.mintick)
 body = math.abs(close - open)
 narrow = rng <= baseAtrMax * atr
-impulseUp = close > open and body >= bodyMinPct / 100.0 * rng and rng >= impAtrMin * atr and close > high[1]
-impulseDn = close < open and body >= bodyMinPct / 100.0 * rng and rng >= impAtrMin * atr and close < low[1]
+impulseUp = close > open and body >= bodyMinFrac * rng and rng >= impAtrMin * atr and close > high[1]
+impulseDn = close < open and body >= bodyMinFrac * rng and rng >= impAtrMin * atr and close < low[1]
 
-// Base: 1–3 consecutive narrow bars immediately before impulse
+// Base: 1–N consecutive narrow bars immediately before impulse
 baseLen = 0
 baseHiBody = 0.0
 baseLoBody = 0.0
 baseLo = 0.0
 baseHi = 0.0
 baseStart = 0
+impRng = rng
 if impulseUp or impulseDn
-    for i = 1 to 3
+    for i = 1 to baseMaxBars
         if narrow[i]
             baseLen += 1
             bh = math.max(open[i], close[i])
@@ -89,6 +106,7 @@ var array<float> zBot = array.new_float()
 var array<int> zDir = array.new_int() // 1 demand, -1 supply
 var array<int> zBorn = array.new_int()
 var array<int> zBase = array.new_int()
+var array<float> zImp = array.new_float()
 var array<int> zTouch = array.new_int()
 var array<bool> zFresh = array.new_bool()
 var array<bool> zAlive = array.new_bool()
@@ -97,8 +115,8 @@ var array<int> zPend = array.new_int() // pending confirm bar
 var array<box> zBox = array.new_box()
 var array<label> zLab = array.new_label()
 
-f_stars(float top, float bot, int dir, bool fresh, int touches, float impRng) =>
-    impS = impRng / atr
+f_stars(int dir, bool fresh, int touches, float impR) =>
+    impS = atr > 0 ? impR / atr : 0.0
     sImp = impS >= 3 ? 3 : impS >= 2 ? 2 : 1
     sFr = fresh ? 1 : touches <= 1 ? 0 : -1
     sTr = (dir == 1 and bullT) or (dir == -1 and bearT) ? 1 : 0
@@ -116,60 +134,74 @@ for pass = 0 to 1
         pushBot = pass == 0 ? baseLo : baseLoBody
         pushDir = pass == 0 ? 1 : -1
         h0 = pushTop - pushBot
-        if h0 < minZoneAtr * atr
-            if pushDir == 1
-                pushBot := pushTop - minZoneAtr * atr
-            else
-                pushTop := pushBot + minZoneAtr * atr
-        if pushTop - pushBot < minStop$
-            if pushDir == 1
-                pushBot := pushTop - minStop$
-            else
-                pushTop := pushBot + minStop$
-        merged = false
-        if mergeNear and array.size(zTop) > 0
-            for i = 0 to array.size(zTop) - 1
-                if array.get(zAlive, i) and array.get(zDir, i) == pushDir
-                    t = array.get(zTop, i)
-                    b = array.get(zBot, i)
-                    if not (pushTop < b or pushBot > t)
-                        array.set(zTop, i, math.max(t, pushTop))
-                        array.set(zBot, i, math.min(b, pushBot))
-                        array.set(zBorn, i, bar_index)
-                        array.set(zFresh, i, true)
-                        array.set(zTouch, i, 0)
-                        array.set(zUsed, i, false)
-                        array.set(zPend, i, na)
-                        merged := true
-                        break
-        if not merged
-            array.push(zTop, pushTop)
-            array.push(zBot, pushBot)
-            array.push(zDir, pushDir)
-            array.push(zBorn, bar_index)
-            array.push(zBase, baseStart)
-            array.push(zTouch, 0)
-            array.push(zFresh, true)
-            array.push(zAlive, true)
-            array.push(zUsed, false)
-            array.push(zPend, na)
-            array.push(zBox, na)
-            array.push(zLab, na)
-        while array.size(zTop) > maxZones
-            box.delete(array.get(zBox, 0))
-            label.delete(array.get(zLab, 0))
-            array.shift(zTop)
-            array.shift(zBot)
-            array.shift(zDir)
-            array.shift(zBorn)
-            array.shift(zBase)
-            array.shift(zTouch)
-            array.shift(zFresh)
-            array.shift(zAlive)
-            array.shift(zUsed)
-            array.shift(zPend)
-            array.shift(zBox)
-            array.shift(zLab)
+        skipWide = h0 > maxZoneAtr * atr
+        if not skipWide
+            if h0 < minZoneAtr * atr
+                if pushDir == 1
+                    pushBot := pushTop - minZoneAtr * atr
+                else
+                    pushTop := pushBot + minZoneAtr * atr
+            if pushTop - pushBot < minStop$
+                if pushDir == 1
+                    pushBot := pushTop - minStop$
+                else
+                    pushTop := pushBot + minStop$
+            merged = false
+            if mergeNear and array.size(zTop) > 0
+                gap = mergeGapAtr * atr
+                for i = 0 to array.size(zTop) - 1
+                    if array.get(zAlive, i) and array.get(zDir, i) == pushDir
+                        t = array.get(zTop, i)
+                        b = array.get(zBot, i)
+                        if not (pushTop + gap < b or pushBot - gap > t)
+                            array.set(zTop, i, math.max(t, pushTop))
+                            array.set(zBot, i, math.min(b, pushBot))
+                            array.set(zBorn, i, bar_index)
+                            array.set(zImp, i, impRng)
+                            array.set(zFresh, i, true)
+                            array.set(zTouch, i, 0)
+                            array.set(zUsed, i, false)
+                            array.set(zPend, i, na)
+                            merged := true
+                            break
+            if not merged
+                sideCnt = 0
+                if array.size(zTop) > 0
+                    for i = 0 to array.size(zTop) - 1
+                        if array.get(zAlive, i) and array.get(zDir, i) == pushDir
+                            sideCnt += 1
+                if sideCnt >= maxZonesSide and array.size(zTop) > 0
+                    for i = 0 to array.size(zTop) - 1
+                        if array.get(zDir, i) == pushDir
+                            box.delete(array.get(zBox, i))
+                            label.delete(array.get(zLab, i))
+                            array.remove(zTop, i)
+                            array.remove(zBot, i)
+                            array.remove(zDir, i)
+                            array.remove(zBorn, i)
+                            array.remove(zBase, i)
+                            array.remove(zImp, i)
+                            array.remove(zTouch, i)
+                            array.remove(zFresh, i)
+                            array.remove(zAlive, i)
+                            array.remove(zUsed, i)
+                            array.remove(zPend, i)
+                            array.remove(zBox, i)
+                            array.remove(zLab, i)
+                            break
+                array.push(zTop, pushTop)
+                array.push(zBot, pushBot)
+                array.push(zDir, pushDir)
+                array.push(zBorn, bar_index)
+                array.push(zBase, baseStart)
+                array.push(zImp, impRng)
+                array.push(zTouch, 0)
+                array.push(zFresh, true)
+                array.push(zAlive, true)
+                array.push(zUsed, false)
+                array.push(zPend, na)
+                array.push(zBox, na)
+                array.push(zLab, na)
 
 // Trade state
 var int tradeDir = 0
@@ -230,24 +262,26 @@ if array.size(zTop) > 0
                         array.set(zAlive, i, false)
             // confirmation
             pend = array.get(zPend, i)
-            if signalsOn and tradeDir == 0 and sigDir == 0 and not array.get(zUsed, i) and not na(pend)
-                stars = f_stars(top, bot, dir, array.get(zTouch, i) <= 1, array.get(zTouch, i), math.abs(top - bot) + atr)
+            if signalsOn and tradeDir == 0 and sigDir == 0 and not array.get(zUsed, i) and not na(pend) and not nyBlocked
+                stars = f_stars(dir, array.get(zFresh, i) or array.get(zTouch, i) <= 1, array.get(zTouch, i), array.get(zImp, i))
                 trendOk = not effTrend or (dir == 1 and bullT) or (dir == -1 and bearT)
-                if stars >= effMinStars and trendOk
-                    if effEntry == "Limit" and bar_index == pend
+                if stars >= effMinStars and trendOk and bar_index > pend and bar_index - pend <= confWin
+                    conf = dir == 1 ? close > top : close < bot
+                    if conf
                         sigDir := dir
                         sigStars := stars
-                        sigEntry := dir == 1 ? top : bot
-                        sigStop := dir == 1 ? bot - stopBuf * atr : top + stopBuf * atr
+                        sigEntry := close
+                        rawStop = dir == 1 ? bot - stopBuf * atr : top + stopBuf * atr
+                        // enforce min stop $
+                        if dir == 1 and close - rawStop < minStop$
+                            rawStop := close - minStop$
+                        if dir == -1 and rawStop - close < minStop$
+                            rawStop := close + minStop$
+                        sigStop := rawStop
                         sigIdx := i
-                    if effEntry == "Confirmation" and bar_index > pend and bar_index - pend <= confWin
-                        conf = dir == 1 ? close > top : close < bot
-                        if conf
-                            sigDir := dir
-                            sigStars := stars
-                            sigEntry := close
-                            sigStop := dir == 1 ? bot - stopBuf * atr : top + stopBuf * atr
-                            sigIdx := i
+
+var float sumWin = 0.0
+var float sumLoss = 0.0
 
 // Manage open trade
 if tradeDir != 0 and bar_index > tBar
@@ -260,13 +294,21 @@ if tradeDir != 0 and bar_index > tBar
         if low <= curStop
             outcome := -1
             resR := halfDone ? halfR - costR : -1.0 - costR
+        else if exitTp2Only
+            if high >= tTp2
+                outcome := 2
+                nTp1 += 1
+                nTp2 += 1
+                resR := (tTp2 - tEntry) / risk - costR
         else if not halfDone and high >= tTp1
-            halfDone := true
-            nTp1 += 1
-            halfR := 0.5 * ((tTp1 - tEntry) / risk)
-            if not exit5050
+            if exitTp1Only or (not exit5050 and not exitTp2Only)
                 outcome := 1
+                nTp1 += 1
                 resR := (tTp1 - tEntry) / risk - costR
+            else
+                halfDone := true
+                nTp1 += 1
+                halfR := 0.5 * ((tTp1 - tEntry) / risk)
         else if halfDone and high >= tTp2
             outcome := 2
             nTp2 += 1
@@ -275,13 +317,21 @@ if tradeDir != 0 and bar_index > tBar
         if high >= curStop
             outcome := -1
             resR := halfDone ? halfR - costR : -1.0 - costR
+        else if exitTp2Only
+            if low <= tTp2
+                outcome := 2
+                nTp1 += 1
+                nTp2 += 1
+                resR := (tEntry - tTp2) / risk - costR
         else if not halfDone and low <= tTp1
-            halfDone := true
-            nTp1 += 1
-            halfR := 0.5 * ((tEntry - tTp1) / risk)
-            if not exit5050
+            if exitTp1Only or (not exit5050 and not exitTp2Only)
                 outcome := 1
+                nTp1 += 1
                 resR := (tEntry - tTp1) / risk - costR
+            else
+                halfDone := true
+                nTp1 += 1
+                halfR := 0.5 * ((tEntry - tTp1) / risk)
         else if halfDone and low <= tTp2
             outcome := 2
             nTp2 += 1
@@ -292,9 +342,11 @@ if tradeDir != 0 and bar_index > tBar
         sumR2 += resR * resR
         if resR > 0
             winN += 1
+            sumWin += resR
             streak := 0
         else
             nStop += 1
+            sumLoss += math.abs(resR)
             streak += 1
             maxStreak := math.max(maxStreak, streak)
         label.new(bar_index, tradeDir == 1 ? low : high, (tradeDir == 1 ? "BUY " : "SELL ") + f_starTxt(tStars) + "\n" + str.tostring(resR, "#.##") + "R", style = tradeDir == 1 ? label.style_label_up : label.style_label_down, color = color.new(color.yellow, 0), textcolor = color.black, size = size.small)
@@ -330,7 +382,8 @@ if barstate.islast
         label.delete(array.get(zLab, i))
         array.set(zBox, i, na)
         array.set(zLab, i, na)
-        if not array.get(zAlive, i)
+        alive = array.get(zAlive, i)
+        if not alive and not keepDead
             continue
         top = array.get(zTop, i)
         bot = array.get(zBot, i)
@@ -341,12 +394,15 @@ if barstate.islast
         x1 = drawFromBase ? array.get(zBase, i) : array.get(zBorn, i)
         fresh = array.get(zFresh, i)
         touches = array.get(zTouch, i)
-        stars = f_stars(top, bot, dir, fresh or touches <= 1, touches, math.abs(top - bot) + atr)
-        bx = box.new(x1, top, bar_index + 3, bot, bgcolor = dir == 1 ? colDem : colSup, border_color = dir == 1 ? colDemB : colSupB, border_style = fresh ? line.style_solid : line.style_dashed, border_width = 2)
+        stars = f_stars(dir, fresh or touches <= 1, touches, array.get(zImp, i))
+        bg = not alive ? color.new(color.gray, 85) : dir == 1 ? colDem : colSup
+        bd = not alive ? color.gray : dir == 1 ? colDemB : colSupB
+        bx = box.new(x1, top, bar_index + 10, bot, bgcolor = bg, border_color = bd, border_style = fresh ? line.style_solid : line.style_dashed, border_width = 2)
         array.set(zBox, i, bx)
-        side = dir == 1 ? (lang == "RU" ? "Demand " : "Demand ") : (lang == "RU" ? "Supply " : "Supply ")
-        st = fresh ? "FRESH" : "TEST " + str.tostring(touches)
-        lb = label.new(bar_index + 3, dir == 1 ? top : bot, side + f_starTxt(stars) + " " + st, style = label.style_label_left, color = color.new(#1E2329, 0), textcolor = color.white, size = size.small)
+        side = dir == 1 ? "Demand " : "Supply "
+        depthPct = alive and not fresh and (top - bot) > 0 ? math.min(100.0, math.abs(dir == 1 ? math.min(0.0, low - top) : math.max(0.0, high - bot)) / (top - bot) * 100.0) : 0.0
+        st = not alive ? "DEAD" : fresh ? "FRESH" : "TEST " + str.tostring(touches) + " · " + str.tostring(depthPct, "#") + "%"
+        lb = label.new(bar_index + 10, dir == 1 ? top : bot, side + f_starTxt(stars) + " " + st, style = label.style_label_left, color = color.new(#1E2329, 0), textcolor = color.white, size = size.small)
         array.set(zLab, i, lb)
 
 // Active trade lines
@@ -367,21 +423,9 @@ if barstate.islast
         ln2 := line.new(tBar, tTp2, x2, tTp2, color = color.blue, width = 2, style = line.style_dashed)
 
 avgR = nTrades > 0 ? sumR / nTrades : na
-wr = nTrades > 0 ? winN * 100.0 / nTrades : na
 tp1pct = nTrades > 0 ? nTp1 * 100.0 / nTrades : na
 tp2pct = nTrades > 0 ? nTp2 * 100.0 / nTrades : na
-// profit factor approx from wins/losses via average
-grossWin = 0.0
-grossLoss = 0.0
-pf = na
-// approximate PF using mean win/loss if we tracked only sum — use win rate & avg
-// better: maintain running; here use sumR components via assumption when WR known — show NA until enough
-var float sumWin = 0.0
-var float sumLoss = 0.0
-// patched below on close — already closed; use secondary vars updated in outcome
-// (sumWin/sumLoss updated via mirror)
-beWR = effTpMode == "$" and not na(avgR) ? 50.0 : 50.0
-// For $ targets with large stop, published note: needs > ~74% for $4/$8 style — compute from median risk proxy
+pf = sumLoss > 0 ? sumWin / sumLoss : na
 needWR = 73.9
 sd = nTrades > 1 ? math.sqrt(math.max(0.0, sumR2 / nTrades - avgR * avgR)) : na
 tStat = nTrades > 1 and not na(sd) and sd > 0 ? avgR / (sd / math.sqrt(nTrades)) : na
@@ -390,34 +434,33 @@ txt = enough ? color.white : color.gray
 
 var table t = table.new(position.top_right, 2, 14, bgcolor = color.new(#0B0E11, 5), border_width = 1, border_color = #2B3139)
 if barstate.islast
-    title = lang == "RU" ? "Zone Rank [pandich] v2" : "Zone Rank [pandich] v2"
+    title = "Zone Rank [pandich] v2.1"
     table.cell(t, 0, 0, title, text_color = color.yellow, text_size = size.small)
     table.cell(t, 1, 0, signalsOn ? (tradeDir == 0 ? (lang == "RU" ? "ЖДИ" : "WAIT") : tradeDir == 1 ? "LONG" : "SHORT") : (lang == "RU" ? "сигналы выкл" : "signals off"), text_color = color.white, text_size = size.normal)
     table.cell(t, 0, 1, lang == "RU" ? "Сделок" : "Trades", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 1, str.tostring(nTrades), text_color = txt, text_size = size.tiny)
-    table.cell(t, 0, 2, lang == "RU" ? "Win rate (TP1)" : "Win rate (TP1)", text_color = color.gray, text_size = size.tiny)
+    table.cell(t, 0, 2, "Win rate (TP1)", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 2, na(tp1pct) ? "—" : str.tostring(tp1pct, "#.#") + "% · needs > " + str.tostring(needWR, "#.#") + "%", text_color = txt, text_size = size.tiny)
     table.cell(t, 0, 3, lang == "RU" ? "Дошли до TP2" : "Reached TP2", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 3, na(tp2pct) ? "—" : str.tostring(tp2pct, "#.#") + "%", text_color = txt, text_size = size.tiny)
     table.cell(t, 0, 4, lang == "RU" ? "Итог после издержек" : "Net after costs", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 4, na(avgR) ? "—" : str.tostring(sumR, "#.#") + "R (" + str.tostring(avgR, "#.##") + "R/trade)", text_color = enough ? (sumR >= 0 ? #0ECB81 : #F6465D) : color.gray, text_size = size.tiny)
     table.cell(t, 0, 5, "Profit factor", text_color = color.gray, text_size = size.tiny)
-    // PF proxy: if avgR and wr — not exact; show dash unless we can compute from parts
-    table.cell(t, 1, 5, nTrades > 0 and nStop > 0 and winN > 0 ? str.tostring(math.abs(sumR + nStop * 1.0) / math.max(nStop * 1.0, 0.01), "#.##") + " (proxy)" : "—", text_color = txt, text_size = size.tiny)
+    table.cell(t, 1, 5, na(pf) ? "—" : str.tostring(pf, "#.##"), text_color = txt, text_size = size.tiny)
     table.cell(t, 0, 6, lang == "RU" ? "Значимость (t)" : "Significance (t)", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 6, na(tStat) ? "—" : str.tostring(tStat, "#.##") + (not na(tStat) and tStat < 1.96 ? (lang == "RU" ? " · может быть случайность" : " · might be chance") : ""), text_color = txt, text_size = size.tiny)
     table.cell(t, 0, 7, lang == "RU" ? "Макс. серия стопов" : "Max stop streak", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 7, str.tostring(maxStreak), text_color = txt, text_size = size.tiny)
     table.cell(t, 0, 8, "TF", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 8, timeframe.period + (sigMode == "Auto" and timeframe.period != "15" ? " · Auto=off" : " · Auto/On"), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 1, 8, timeframe.period + (sigMode == "Авто" and timeframe.period != "15" ? " · Auto=off" : " · signals"), text_color = color.white, text_size = size.tiny)
     table.cell(t, 0, 9, lang == "RU" ? "Режим" : "Mode", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 9, preset + " · " + effEntry + " · " + effTpMode + " " + str.tostring(effTp1$) + "/" + str.tostring(effTp2$), text_color = color.white, text_size = size.tiny)
+    table.cell(t, 1, 9, preset + " · " + effTpMode + " " + str.tostring(effTp1$) + "/" + str.tostring(effTp2$), text_color = color.white, text_size = size.tiny)
     table.cell(t, 0, 10, lang == "RU" ? "Тренд (60)" : "Trend (60)", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 10, bullT ? "BULL ▲" : bearT ? "BEAR ▼" : "FLAT", text_color = bullT ? #0ECB81 : bearT ? #F6465D : color.gray, text_size = size.tiny)
     table.cell(t, 0, 11, lang == "RU" ? "Сессия" : "Session", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 11, sessOk ? (lang == "RU" ? "активная" : "active") : (lang == "RU" ? "тихая" : "quiet"), text_color = color.white, text_size = size.tiny)
     table.cell(t, 0, 12, lang == "RU" ? "Перерисовка" : "Repaint", text_color = color.gray, text_size = size.tiny)
-    table.cell(t, 1, 12, lang == "RU" ? "нет · зоны от импульса" : "no · zones from impulse", text_color = color.white, text_size = size.tiny)
+    table.cell(t, 1, 12, lang == "RU" ? "нет / зоны от базы" : "No / zones", text_color = color.white, text_size = size.tiny)
     table.cell(t, 0, 13, lang == "RU" ? "Издержки" : "Costs", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 13, "$" + str.tostring(cost) + " · zones " + str.tostring(array.size(zTop)), text_color = color.gray, text_size = size.tiny)
 

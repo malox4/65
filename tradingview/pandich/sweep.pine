@@ -21,14 +21,17 @@ cost     = input.float(0.30, "Cost per trade (price)", minval = 0.0, step = 0.01
 
 grpD = "Display"
 showZones = input.bool(true, "Draw zones", group = grpD)
-keepN     = input.int(6, "Keep last drawings", minval = 1, maxval = 40, group = grpD)
-panelPos  = input.string("Top right", "Panel position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpD)
-minSample = input.int(30, "Grey stats below N trades", minval = 5, group = grpD)
-colL = input.color(#26A69A, "Long", group = grpD)
-colS = input.color(#EF5350, "Short", group = grpD)
+projBars  = input.int(6, "Project zone N bars ahead", minval = 1, maxval = 50, group = grpD)
+keepN     = input.int(8, "Keep last N drawings", minval = 1, maxval = 40, group = grpD)
+panelPos  = input.string("Top right", "Panel position", options = ["Top right", "Top left", "Bottom right", "Bottom left", "Middle right"], group = grpD)
+showPanel = input.bool(true, "Show panel", group = grpD)
+minSample = input.int(30, "Grey out below N trades", minval = 5, group = grpD)
+colL = input.color(#00E5A8, "Long", group = grpD)
+colS = input.color(#FF4D6D, "Short", group = grpD)
+colBrand = input.color(#B388FF, "Brand", group = grpD)
 colTp = input.color(#42A5F5, "Targets", group = grpD)
 
-posMap = panelPos == "Top left" ? position.top_left : panelPos == "Bottom right" ? position.bottom_right : panelPos == "Bottom left" ? position.bottom_left : position.top_right
+posMap = panelPos == "Top left" ? position.top_left : panelPos == "Bottom right" ? position.bottom_right : panelPos == "Bottom left" ? position.bottom_left : panelPos == "Middle right" ? position.middle_right : position.top_right
 
 atr = ta.atr(atrLen)
 volOk = volMult <= 0 or volume > ta.sma(volume, 20) * volMult
@@ -194,8 +197,8 @@ if barstate.islast
     box.delete(bxR)
     box.delete(bxW)
     if showZones and tradeDir != 0
-        x2 = bar_index + 8
-        lnE := line.new(tBar, tEntry, x2, tEntry, color = color.yellow, width = 2)
+        x2 = bar_index + projBars
+        lnE := line.new(tBar, tEntry, x2, tEntry, color = colBrand, width = 2)
         lnS := line.new(tBar, tStop, x2, tStop, color = colS, width = 2, style = line.style_dotted)
         ln1 := line.new(tBar, tTp1, x2, tTp1, color = colTp, width = 1, style = line.style_dashed)
         ln2 := line.new(tBar, tTp2, x2, tTp2, color = colTp, width = 1, style = line.style_dashed)
@@ -203,16 +206,15 @@ if barstate.islast
         bxR := box.new(tBar, math.max(tEntry, tStop), x2, math.min(tEntry, tStop), bgcolor = color.new(colS, 85), border_color = color.new(colS, 55))
         bxW := box.new(tBar, math.max(tEntry, tTp3), x2, math.min(tEntry, tTp3), bgcolor = color.new(colL, 88), border_color = color.new(colL, 55))
         drawnId := tBar
-    // trim unused hist arrays if any
     while array.size(histRisk) > keepN
         box.delete(array.shift(histRisk))
     while array.size(histRew) > keepN
         box.delete(array.shift(histRew))
 
 var table t = table.new(posMap, 2, 8, bgcolor = color.new(#0B0E11, 8), border_width = 1, border_color = #2B3139)
-if barstate.islast
+if showPanel and barstate.islast
     head = "SWEEP [pandich] | " + syminfo.ticker + " · " + timeframe.period
-    table.cell(t, 0, 0, head, text_color = color.yellow, text_size = size.small)
+    table.cell(t, 0, 0, head, text_color = colBrand, text_size = size.small)
     table.cell(t, 1, 0, tradeDir != 0 ? (tradeDir == 1 ? "LONG" : "SHORT") : "", text_color = tradeDir == 1 ? colL : tradeDir == -1 ? colS : color.gray, text_size = size.small)
     table.cell(t, 0, 1, "trades", text_color = color.gray, text_size = size.tiny)
     table.cell(t, 1, 1, str.tostring(nTrades) + "  (skipped " + str.tostring(nSkip) + ")", text_color = txtCol, text_size = size.tiny)

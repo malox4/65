@@ -1,18 +1,18 @@
 //@version=6
 // Pandich Supertrend + Entry/TP1/TP2/TP3 — recreation from published logic.
-indicator("Pandich Supertrend TP [65]", overlay = true, max_labels_count = 60, max_lines_count = 40, max_boxes_count = 20)
+indicator("Supertrend with Entry, TP1, TP2 & TP3 [Pandich]", shorttitle = "Supertrend Pandich", overlay = true, max_labels_count = 60, max_lines_count = 40, max_boxes_count = 20)
 
 grp = "Supertrend"
-atrLen = input.int(10, "ATR length", group = grp)
-atrMult = input.float(3.0, "ATR factor", group = grp)
-useAdx = input.bool(false, "ADX filter", group = grp)
+atrMult = input.float(2.5, "Factor", group = grp, tooltip = "Multiplier for the ATR-based Supertrend distance.")
+atrLen = input.int(14, "ATR period", group = grp)
+useAdx = input.bool(false, "Only signal when ADX is strong", group = grp)
 adxTh = input.float(20.0, "Signal ADX threshold", group = grp)
-useEma = input.bool(false, "EMA 200 filter", group = grp)
-stopAtr = input.float(1.5, "SL × ATR", group = grp)
-tp1R = input.float(1.0, "TP1 R", group = grp)
-tp2R = input.float(2.0, "TP2 R", group = grp)
-tp3R = input.float(3.0, "TP3 R", group = grp)
-showMarks = input.bool(true, "Show BUY/SELL marks", group = grp)
+useEma = input.bool(false, "EMA 200 direction filter", group = grp)
+stopAtr = input.float(1.5, "Stop-loss ATR multiplier", group = grp)
+tp1R = input.float(1.0, "TP1 risk/reward", group = grp)
+tp2R = input.float(2.0, "TP2 risk/reward", group = grp)
+tp3R = input.float(3.0, "TP3 risk/reward", group = grp)
+showMarks = input.bool(true, "Show signals", group = grp)
 
 [st, stDir] = ta.supertrend(atrMult, atrLen)
 atr = ta.atr(14)

@@ -4,18 +4,18 @@
 
 Имена на графике: `Pandich … [65]`.
 
-| Файл | Оригинал | Полный состав |
+| Файл | Оригинал | Выровнено по metaInfo TV |
 |---|---|---|
-| `sweep.pine` | Sweep | Свип, skip по max ATR, TP1–3, E net, метки SWEEP |
-| `liquidity_ez.pine` | Liquidity EZ | Пулы ликвидности, Demand/Supply FRESH/TEST, SWEEP TRACE, ENTRY/INVALIDATION/TARGET 3R, status panel + quality |
-| `zone_rank.pine` | Zone Rank | Массив зон, ★1–5, FRESH/TEST, merge, confirm/limit, 50/50+BE, панель WR/PF/t/серия/сессия |
-| `panda_scanner.pine` | Panda Scanner | 6 сетапов + скорборд |
-| `ultra_signals.pine` | Ultra Signals | RSI + HA, пресеты, BE/trail |
-| `matematik_26.pine` | Matematik 2.6 | Волна / 2.6 |
-| `supertrend_tp.pine` | Supertrend TP | Flip + TP1–3 |
-| `zigzag_signals.pine` | ZigZag Signals | Confirmed ZZ |
-| `buy_sell_v1.pine` | Buy Sell V1 | Свинг + confirm marker |
-| `sessions_sd_daily.pine` | Sessions + S/D | 4 сессии (range/mean/VWAP/max-min) + **дневной volume profile по bins** → supply/demand |
+| `sweep.pine` | Sweep [pandich] | lookback20, skip maxATR, TP1–3, keepN=8, brand colors, E net |
+| `liquidity_ez.pine` | Liquidity EZ | EMA50, swing5, wick/body/reclaim/confirm≤2, cooldown10, SL1.5ATR / 3R, status panel |
+| `zone_rank.pine` | Zone Rank v2.1 | база+импульс, ★1–5, maxH2ATR, merge OFF, cost$0.3, Авто=M15, Высокий винрейт $4/$8 |
+| `panda_scanner.pine` | Panda Scanner | 6 сетапов, stop 1.2ATR, scoreboard |
+| `ultra_signals.pine` | Ultra Signals | RSI+HA (protected source — логика по описанию) |
+| `matematik_26.pine` | Matematik 2.6 | волна/2.6, вход касание зоны |
+| `supertrend_tp.pine` | Supertrend TP | Factor 2.5, ATR14, TP1–3 |
+| `zigzag_signals.pine` | ZigZag Signals | confirmed ZZ |
+| `buy_sell_v1.pine` | Buy Sell V1 | signalLib: HIGH LOWER / CANDLES / MOVEMENT, Repaint ON |
+| `sessions_sd_daily.pine` | Sessions + S/D | NY/London/Tokyo/Sydney ranges + daily volume bins |
 
 ## Как поставить
 
